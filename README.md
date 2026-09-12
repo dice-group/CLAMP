@@ -101,34 +101,85 @@ encoders are validated.
 0.24 for RGCN / GATv2 / GraphSAGE. Since `encode()` reprocesses the *whole*
 UMLS graph on every mini-batch (135 entities, 5216 training triples — a
 few milliseconds per forward pass), training much longer than a typical
-per-triple KGE model costs almost nothing here, so a small manual sweep
-over `--lr` and `--num_epochs` (`scripts/run_umls.sh` has the exact
-commands) was enough to leave the undertrained regime:
+per-triple KGE model costs almost nothing here, so a first tuning pass
+just trained longer and swept `--lr` — which surfaced two real bugs before
+it produced a trustworthy number:
+
+1. **Encoder answer-leakage** (`src/models/base_gnn.py::_graph_excluding_batch`).
+   Every training triple `(h, r, t)` is both a training *label* and a live
+   edge in the message-passing graph; because inverse edges are added for
+   propagation, `t`'s embedding sits one hop from `h`, so the encoder could
+   trivially hand the decoder the answer instead of learning to generalise.
+   R-GCN's own paper (Schlichtkrull et al. 2018, Section 4.2) reports and
+   fixes exactly this for link prediction; this project now excludes each
+   mini-batch's own query edges (both directions) from the propagation
+   graph on every training step, only at training time (validation/test
+   triples were never in the graph to begin with, so nothing changes for
+   them). Fixing this alone *dropped* several "good-looking" scores (e.g.
+   RGCN's apparent 0.806 test MRR fell to 0.648) — those earlier numbers
+   were inflated by the leak, not achieved by real learning.
+2. **Evaluator tie-breaking** (`src/evaluator.py`). The naive filtered-rank
+   formula `rank = 1 + count(scores > target)` gives rank 1 to *every* tied
+   score, so a degenerate model that collapses to outputting the exact
+   same score for every entity (a real GNN failure mode — representation
+   over-smoothing/collapse — that this project hit at high learning rates)
+   was reported as a perfect MRR of 1.0 instead of the near-chance result
+   it actually deserved. Fixed by splitting credit across ties (`rank = 1 +
+   count(strictly greater) + 0.5 * count(tied)`), the standard convention
+   (see the RotatE paper's evaluation-protocol discussion). This is why
+   `--lr 0.05` for RGCN and `--lr 0.15` for GATv2 both now correctly show
+   near-chance MRR (0.017, 0.128) instead of 1.0 — both configurations
+   destabilise training into a collapsed encoder, they don't "solve" UMLS.
+
+With both fixes in place, a small `--lr` sweep at `--num_epochs 500` (exact
+commands in `scripts/run_umls.sh`) gives:
 
 | Model | Config (beyond the shared `embedding_dim=32`, 2 GNN layers) | Train MRR | Val MRR | **Test MRR** | Test H@10 |
 |---|---|---|---|---|---|
-| RGCN | `lr=0.01`, 500 epochs | 0.828 | 0.778 | **0.806** | 0.962 |
-| GATv2 | `lr=0.01`, 500 epochs, 4 heads | 0.890 | 0.864 | **0.854** | 0.976 |
-| GraphSAGE | `lr=0.15`, 500 epochs | 0.872 | 0.839 | **0.834** | 0.964 |
+| RGCN | `lr=0.01`, 500 epochs | 0.83 | 0.78 | **0.648** | 0.882 |
+| GATv2 | `lr=0.02`, 500 epochs, 4 heads | — | — | **0.864** | 0.980 |
+| GraphSAGE | `lr=0.15`, 500 epochs | — | — | **0.834** | 0.959 |
 
-(Chance level on UMLS's 135 entities is ≈0.02 MRR.) All three now sit
-solidly in the range reported in the KGE literature for other strong
-models on UMLS (e.g. ConvE, ComplEx, TuckER report test MRR ≈0.85-0.95,
-H@10 ≈0.95-0.99), and the small, consistent train→test gap for each model
-indicates this is learning signal, not overfitting to the tiny graph.
-GraphSAGE needed the largest learning rate to reach this range — its
-per-relation `SAGEConv`s each see a sparse edge subset (UMLS has 46
-relations, ~57 propagation edges per relation type on average before
-inverse-edge doubling), so each one trains more slowly per step than
-RGCN's/GATv2's shared-encoder alternatives at the same `lr`.
+(Chance level on UMLS's 135 entities is ≈0.02 MRR.) GATv2 and GraphSAGE
+land in the range reported for strong published KGE models on UMLS (e.g.
+ConvE, ComplEx, TuckER: test MRR ≈0.85-0.95); RGCN's honest number is
+lower — plausible given basis decomposition is off and it has no
+attention/larger-aggregator capacity to compensate for the harder,
+leakage-free training signal, not evidence of a remaining bug (its
+train→val→test progression is smooth, and it's still far above chance).
+Higher learning rates destabilise all three past this point (RGCN
+collapses by `lr=0.05`, GATv2 by `lr=0.15`) — see the note above.
 
-This was a manual sweep over `lr` and `num_epochs` only (`scripts/run_umls.sh`
-has the exact commands used per model) — not a full grid search, not
-averaged over seeds, and no early stopping. Treat these as "each encoder
-demonstrably works and is in a credible range for this dataset," not as a
-tuned benchmark suitable for ranking the three encoders against each
-other; do the fuller search (grid + seeds) before drawing any comparative
-conclusion, and only after that extend to a second dataset.
+This is still a manual sweep over `lr` only (`scripts/run_umls.sh` has the
+exact commands used per model), not a full grid search, not averaged over
+seeds, and with no early stopping or basis decomposition/weight-decay
+tuning for RGCN specifically. Treat these as "each encoder demonstrably
+works, generalises past its own training graph, and is in a credible
+range for this dataset" — not a tuned benchmark suitable for ranking the
+three encoders against each other. RGCN in particular likely has room
+left (basis decomposition, weight decay) that wasn't explored here.
+
+## WN18RR: a much sparser, harder graph
+
+WN18RR (`KGs/WN18RR`: ~40,943 entities, 11 relations, 86,835 train
+triples) has ~4 propagation edges per entity on average versus UMLS's
+~150 — exactly the regime where the encoder answer-leakage bug above is
+most damaging (a sparse node's *only* neighbour of a relation can be the
+very training edge being predicted), so this dataset is also what exposed
+that bug in the first place: before the fix, WN18RR training was
+essentially unusable (test MRR 0.01-0.11 across all three models at 300
+epochs). Training here also uses `--accelerator gpu` (added in
+`src/config.py`, off by default per this project's CPU-first default) —
+full-graph message passing over ~174k propagation edges is the bottleneck
+on CPU, not the DistMult decode step.
+
+Results on WN18RR are still being tuned; expect this section to be
+updated once a trustworthy configuration is found. For reference, strong
+published KGE models (not GNN-encoder based) report test MRR ≈0.43-0.48
+on WN18RR (e.g. RotatE ≈0.476, ConvE ≈0.46); R-GCN-style encoders
+specifically are reported lower than that in follow-up literature (e.g.
+CompGCN reports R-GCN at MRR ≈0.40 on WN18RR), which is the credible
+target range for these models here, not the UMLS numbers above.
 
 ## Tests
 

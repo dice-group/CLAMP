@@ -64,9 +64,10 @@ class GATv2(RelationalGNNEncoder):
                 ))
         return layers
 
-    def _apply_layer(self, layer_idx: int, layer: torch.nn.Module, x: torch.FloatTensor) -> torch.FloatTensor:
-        edge_attr = self.gnn_relation_embeddings(self.edge_type)
-        x = layer(x, self.edge_index, edge_attr=edge_attr)
+    def _apply_layer(self, layer_idx: int, layer: torch.nn.Module, x: torch.FloatTensor,
+                      edge_index: torch.LongTensor, edge_type: torch.LongTensor) -> torch.FloatTensor:
+        edge_attr = self.gnn_relation_embeddings(edge_type)
+        x = layer(x, edge_index, edge_attr=edge_attr)
         if layer_idx < self.num_gnn_layers - 1:
             x = F.elu(x)
         return x

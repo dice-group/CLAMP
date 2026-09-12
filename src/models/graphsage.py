@@ -65,8 +65,9 @@ class GraphSAGE(RelationalGNNEncoder):
             for _ in range(self.num_gnn_layers)
         ])
 
-    def _apply_layer(self, layer_idx: int, layer: torch.nn.Module, x: torch.FloatTensor) -> torch.FloatTensor:
-        x = layer(x, self.edge_index, self.edge_type)
+    def _apply_layer(self, layer_idx: int, layer: torch.nn.Module, x: torch.FloatTensor,
+                      edge_index: torch.LongTensor, edge_type: torch.LongTensor) -> torch.FloatTensor:
+        x = layer(x, edge_index, edge_type)
         if layer_idx < self.num_gnn_layers - 1:
             x = F.relu(x)
         # GraphSAGE Algorithm 2, line 7: unit-normalise node representations at every layer.

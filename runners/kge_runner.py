@@ -44,7 +44,7 @@ def train_gnn_kge_model(args) -> dict:
     # BaseKGELightning), so no custom training loop / LightningModule wrapper is needed.
     trainer = pl.Trainer(
         max_epochs=args.num_epochs,
-        accelerator="cpu",
+        accelerator=getattr(args, "accelerator", "cpu"),
         devices=1,
         logger=False,
         enable_checkpointing=False,
@@ -62,6 +62,7 @@ def train_gnn_kge_model(args) -> dict:
 
     # (5) Persist model + report in dicee's usual experiment-folder layout.
     if args.save_experiment:
+        model.to("cpu")
         store(trained_model=model, model_name="model", full_storage_path=args.full_storage_path)
         save_report(args, model, entity_dataset, eval_report, runtime_seconds)
 

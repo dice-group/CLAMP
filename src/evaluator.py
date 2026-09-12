@@ -92,7 +92,17 @@ class Evaluator:
                 predictions[rows, cols] = float("-inf")
             predictions.scatter_(1, e2_idx.view(-1, 1), target_scores.view(-1, 1))
 
-            ranks = (predictions > target_scores.unsqueeze(1)).sum(dim=1) + 1
+            # Average-rank tie-breaking: a strict ">" comparison alone would count every
+            # tied (non-target) entity as ranked *below* the target, so a degenerate model
+            # that outputs an identical score for every entity (a real failure mode we hit
+            # in practice — a GNN encoder can collapse to one representation for all nodes
+            # under an unstable learning rate) would score a fraudulent rank of 1 on every
+            # query instead of the near-chance rank such a model actually deserves. Splitting
+            # the credit for ties (excluding the target's own filtered-back score) is the
+            # standard fix (see Sun et al. 2019, RotatE, Appendix on evaluation protocol).
+            strictly_greater = (predictions > target_scores.unsqueeze(1)).sum(dim=1)
+            tied_with_target = (predictions == target_scores.unsqueeze(1)).sum(dim=1) - 1  # exclude target itself
+            ranks = strictly_greater.to(torch.float32) + 1.0 + 0.5 * tied_with_target.to(torch.float32)
             rank_sum += ranks.to(torch.float32).sum().item()
             reciprocal_rank_sum += torch.reciprocal(ranks.to(torch.float32)).sum().item()
             hits1 += (ranks <= 1).sum().item()

@@ -13,7 +13,7 @@ python main.py --model RGCN --dataset_dir KGs/UMLS \
 
 python main.py --model GATv2 --dataset_dir KGs/UMLS \
     --embedding_dim 32 --num_gnn_layers 2 --gnn_heads 4 \
-    --lr 0.01 --num_epochs 500 --batch_size 512 \
+    --lr 0.02 --num_epochs 500 --batch_size 512 \
     --eval_model train_val_test
 
 python main.py --model GraphSAGE --dataset_dir KGs/UMLS \

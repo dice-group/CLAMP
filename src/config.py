@@ -52,6 +52,11 @@ def get_default_arguments(args_list=None) -> argparse.Namespace:
     parser.add_argument("--scoring_technique", type=str, default="KvsAll", choices=["KvsAll"])
     parser.add_argument("--num_core", type=int, default=0, help="DataLoader worker count.")
     parser.add_argument("--random_seed", type=int, default=1)
+    parser.add_argument("--accelerator", type=str, default="cpu", choices=["cpu", "gpu", "auto"],
+                         help="lightning.pytorch.Trainer accelerator. CPU by default per this "
+                              "project's develop-on-CPU-first convention; pass --accelerator gpu "
+                              "explicitly for larger graphs (e.g. WN18RR) where full-graph message "
+                              "passing on CPU is the bottleneck.")
 
     # --- Evaluation -------------------------------------------------------
     parser.add_argument("--eval_model", type=str, default="train_val_test",
