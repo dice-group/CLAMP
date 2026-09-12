@@ -94,22 +94,41 @@ Results land under `Experiments/<dataset>/<model>_<dim>/`: `model.pt`,
 ## First-experiment gate: UMLS only
 
 Per project scope, UMLS is the only dataset used until these three
-encoders are validated. A 60-epoch, untuned smoke run (`embedding_dim=32`,
-`lr=0.01`, `batch_size=512`, no basis decomposition, 4 GATv2 heads) gives
-non-degenerate, clearly-learning filtered test MRR for all three
-(chance level on UMLS's 135 entities is ≈0.02 MRR):
+encoders are validated.
 
-| Model | Test MRR | Test H@10 |
-|---|---|---|
-| RGCN | 0.233 | 0.433 |
-| GATv2 | 0.628 | 0.862 |
-| GraphSAGE | 0.237 | 0.348 |
+**A first 60-epoch smoke run badly undertrained all three models**
+(`lr=0.01`, `embedding_dim=32`, default settings): test MRR of 0.23 / 0.63 /
+0.24 for RGCN / GATv2 / GraphSAGE. Since `encode()` reprocesses the *whole*
+UMLS graph on every mini-batch (135 entities, 5216 training triples — a
+few milliseconds per forward pass), training much longer than a typical
+per-triple KGE model costs almost nothing here, so a small manual sweep
+over `--lr` and `--num_epochs` (`scripts/run_umls.sh` has the exact
+commands) was enough to leave the undertrained regime:
 
-These numbers are a pipeline-correctness check, not a tuned benchmark —
-no hyperparameter search, early stopping, or seed averaging was done. Do
-not read them as a claim about which encoder is "better"; extend to other
-datasets or draw comparative conclusions only after tuning each model
-separately and averaging over seeds.
+| Model | Config (beyond the shared `embedding_dim=32`, 2 GNN layers) | Train MRR | Val MRR | **Test MRR** | Test H@10 |
+|---|---|---|---|---|---|
+| RGCN | `lr=0.01`, 500 epochs | 0.828 | 0.778 | **0.806** | 0.962 |
+| GATv2 | `lr=0.01`, 500 epochs, 4 heads | 0.890 | 0.864 | **0.854** | 0.976 |
+| GraphSAGE | `lr=0.15`, 500 epochs | 0.872 | 0.839 | **0.834** | 0.964 |
+
+(Chance level on UMLS's 135 entities is ≈0.02 MRR.) All three now sit
+solidly in the range reported in the KGE literature for other strong
+models on UMLS (e.g. ConvE, ComplEx, TuckER report test MRR ≈0.85-0.95,
+H@10 ≈0.95-0.99), and the small, consistent train→test gap for each model
+indicates this is learning signal, not overfitting to the tiny graph.
+GraphSAGE needed the largest learning rate to reach this range — its
+per-relation `SAGEConv`s each see a sparse edge subset (UMLS has 46
+relations, ~57 propagation edges per relation type on average before
+inverse-edge doubling), so each one trains more slowly per step than
+RGCN's/GATv2's shared-encoder alternatives at the same `lr`.
+
+This was a manual sweep over `lr` and `num_epochs` only (`scripts/run_umls.sh`
+has the exact commands used per model) — not a full grid search, not
+averaged over seeds, and no early stopping. Treat these as "each encoder
+demonstrably works and is in a credible range for this dataset," not as a
+tuned benchmark suitable for ranking the three encoders against each
+other; do the fuller search (grid + seeds) before drawing any comparative
+conclusion, and only after that extend to a second dataset.
 
 ## Tests
 

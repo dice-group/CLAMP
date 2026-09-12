@@ -43,7 +43,11 @@ def get_default_arguments(args_list=None) -> argparse.Namespace:
                          choices=["Adam", "AdamW", "SGD", "NAdam", "Adagrad", "ASGD", "Adopt"])
     parser.add_argument("--lr", type=float, default=0.01)
     parser.add_argument("--weight_decay", type=float, default=0.0)
-    parser.add_argument("--num_epochs", type=int, default=256)
+    parser.add_argument("--num_epochs", type=int, default=500,
+                         help="500 was needed on UMLS for RGCN/GATv2/GraphSAGE to leave the "
+                              "undertrained regime (see README's 'UMLS results' section) — the "
+                              "encode()->decode() full-graph forward pass is cheap, so training "
+                              "longer than a typical per-triple KGE model costs little here.")
     parser.add_argument("--batch_size", type=int, default=1024)
     parser.add_argument("--scoring_technique", type=str, default="KvsAll", choices=["KvsAll"])
     parser.add_argument("--num_core", type=int, default=0, help="DataLoader worker count.")
