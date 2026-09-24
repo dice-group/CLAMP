@@ -44,9 +44,12 @@ def get_default_arguments(args_list=None) -> argparse.Namespace:
     parser.add_argument("--gnn_graph", type=str, default="train", choices=["train", "random", "none"],
                          help="Propagation graph: the training graph, a random-tail copy of it "
                               "(Zhang et al. 2022's RAT control), or no edges at all (their WNI).")
-    parser.add_argument("--exclude_query_edges", action=argparse.BooleanOptionalAction, default=True,
-                         help="Drop each training batch's own query edges from the propagation "
-                              "graph. The official R-GCN/CompGCN code keeps them (--no-...).")
+    parser.add_argument("--query_edge_exclusion", type=str, default="pair",
+                         choices=["pair", "triple", "none"],
+                         help="Training edges hidden from the propagation graph for each batch: "
+                              "pair = every (h, r, *) of a query; triple = only the batch's own "
+                              "(h, r, t) triples (needs 1vsAll, else behaves as pair); none = keep "
+                              "all, as the official R-GCN/CompGCN code does.")
     parser.add_argument("--gnn_edge_dropout", type=float, default=0.0,
                          help="Fraction of propagation edges dropped per training step (R-GCN, "
                               "Schlichtkrull et al. 2018, used 0.4).")

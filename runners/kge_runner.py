@@ -51,7 +51,9 @@ def train_gnn_kge_model(args) -> dict:
         for x_batch, y_batch in train_dataloader:
             x_batch, y_batch = x_batch.to(device), y_batch.to(device)
             optimizer.zero_grad()
-            scores = model(x_batch)
+            # 1vsAll targets are the queries' answers, which triple-level
+            # query-edge exclusion needs; KvsAll targets are multi-hot rows.
+            scores = model(x_batch, y_batch if args.scoring_technique == "1vsAll" else None)
             loss = loss_fn(scores, y_batch)
             loss.backward()
             optimizer.step()

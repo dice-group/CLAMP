@@ -53,13 +53,18 @@ results land in (`experiments.md`'s UMLS section).
 
 | Model | CoDEx-S | CoDEx-M | Notes |
 |---|---|---|---|
-| MuCo-KGC (2025) | 0.550 | 0.470 | Hits@10: 0.764 / 0.600. **Confirmed no public code exists** — checked both the arXiv abstract/HTML (arxiv.org/abs/2503.03091) and the paper text directly for a GitHub link or code-availability statement; there is none. This is a real literature gap, not something missed by search. |
-| ComplEx / TuckER / RESCAL | ~0.46 / ~0.44 / ~0.32 (CoDEx-S) | — | The CoDEx paper's own LibKGE baselines (Safavi & Koutra, EMNLP 2020) |
+| MuCo-KGC (2025) | 0.550 | 0.470 | BERT-based and ranks tails only, so not comparable to structure-only models. Hits@10: 0.764 / 0.600. **Confirmed no public code exists** — checked both the arXiv abstract/HTML (arxiv.org/abs/2503.03091) and the paper text directly for a GitHub link or code-availability statement; there is none. This is a real literature gap, not something missed by search. |
+| ComplEx / TuckER / RESCAL | 0.465 / 0.444 / 0.404 (CoDEx-S) | 0.337 / 0.328 / 0.317 | The CoDEx paper's own LibKGE baselines (Safavi & Koutra, EMNLP 2020), d = 512 on S (RESCAL 256 on M) |
+| CompGCN / SACN / R-GCN | 0.395 / 0.374 / 0.275 | 0.312 / 0.294 / 0.124 | One baseline run by Nguyen et al. (QGNN, ACML 2021), reused by NoGE, WGE and FHRE; dimension picked from a grid and not reported |
+| R-GCN (2 layers, 2 bases) | 0.350 | — | Méroué et al., ESWC 2026 (LinkPerdition), d = 128 |
 
-**No RGCN or CompGCN numbers exist for CoDEx at all** in the literature —
-this project's own RGCN/GATv2/GraphSAGE runs on CoDEx-S have nothing
-published to be compared against; they're a new data point, not a
-reproduction.
+A few R-GCN and CompGCN numbers do exist for CoDEx (rows above; an earlier
+version of this file said there were none). All of them come from 100–512
+dimensional runs that do not state the chosen dimension, and none compares the
+encoder against its own decoder under one recipe, so this project's d = 32
+runs are still a new data point rather than a reproduction. The full set of
+CoDEx results found, including CoDEx-L, is in
+[`literature-sweep.md`](literature-sweep.md).
 
 ## NELL-995 (MRR) — split-versioning trap
 

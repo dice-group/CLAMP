@@ -51,7 +51,7 @@ class RelationalGNNEncoder(KGEModel):
     * ``init_param`` - one of ``None``, ``"xavier_normal"``
     * ``gnn_residual`` (default False) - add each layer's input to its output
     * ``reciprocal`` (default False) - reciprocal-relations decoder, see ``__init__``
-    * ``gnn_graph`` (default ``"train"``), ``exclude_query_edges`` (default True),
+    * ``gnn_graph`` (default ``"train"``), ``query_edge_exclusion`` (default ``"pair"``),
       ``gnn_edge_dropout`` (default 0.0) - propagation-graph controls, see ``__init__``
     """
 
@@ -84,7 +84,9 @@ class RelationalGNNEncoder(KGEModel):
         self.gnn_graph = args.get("gnn_graph", "train")
         if self.gnn_graph not in ("train", "random", "none"):
             raise ValueError(f"Unknown gnn_graph '{self.gnn_graph}'")
-        self.exclude_query_edges = bool(args.get("exclude_query_edges", True))
+        self.query_edge_exclusion = args.get("query_edge_exclusion", "pair")
+        if self.query_edge_exclusion not in ("pair", "triple", "none"):
+            raise ValueError(f"Unknown query_edge_exclusion '{self.query_edge_exclusion}'")
         # R-GCN's edge dropout (Schlichtkrull et al. 2018, Section 5.1), training only.
         self.gnn_edge_dropout = float(args.get("gnn_edge_dropout", 0.0) or 0.0)
 
@@ -202,8 +204,9 @@ class RelationalGNNEncoder(KGEModel):
         """Apply one GNN layer (incl. any layer-specific activation). Subclasses implement this."""
         raise NotImplementedError
 
-    def _graph_excluding_batch(self, idx_h: torch.LongTensor,
-                               idx_r: torch.LongTensor) -> Tuple[torch.LongTensor, torch.LongTensor]:
+    def _graph_excluding_batch(self, idx_h: torch.LongTensor, idx_r: torch.LongTensor,
+                               idx_t: Optional[torch.LongTensor] = None
+                               ) -> Tuple[torch.LongTensor, torch.LongTensor]:
         """Return the propagation graph with this batch's own query edges removed.
 
         Without this, a training query ``(h, r)`` could be answered by message
@@ -212,12 +215,18 @@ class RelationalGNNEncoder(KGEModel):
         Section 4.2). Inactive outside training: validation/test triples are
         never part of the graph, so there is nothing to exclude.
 
-        A query relation ``r + num_relations`` is the reciprocal query
-        ``(?, r, idx_h)``, so it removes every training triple ``(*, r, idx_h)``.
+        ``query_edge_exclusion`` selects what is removed, both directions:
 
-        ``exclude_query_edges=False`` keeps the batch's edges, as the official
-        R-GCN and CompGCN implementations do; ``gnn_edge_dropout`` then drops a
-        random fraction of the remaining edges.
+        * ``"pair"`` - every training triple ``(idx_h, idx_r, *)``;
+        * ``"triple"`` - only the batch's own triples ``(idx_h, idx_r, idx_t)``,
+          so the query's other known answers stay visible, as they are at
+          evaluation time. Needs ``idx_t``; without it (KvsAll, where every
+          tail of ``(h, r)`` is a target anyway) it falls back to ``"pair"``;
+        * ``"none"`` - nothing, as the official R-GCN and CompGCN code does.
+
+        A query relation ``r + num_relations`` is the reciprocal query
+        ``(?, r, idx_h)``, whose triples are ``(*, r, idx_h)``.
+        ``gnn_edge_dropout`` additionally drops a random fraction of edges.
         """
         edge_index, edge_type = self.graph
         if not self.training:
@@ -225,17 +234,24 @@ class RelationalGNNEncoder(KGEModel):
         if self.gnn_edge_dropout:
             keep = torch.rand(edge_type.shape, device=edge_type.device) >= self.gnn_edge_dropout
             edge_index, edge_type = edge_index[:, keep], edge_type[keep]
-        if not self.exclude_query_edges:
+        if self.query_edge_exclusion == "none":
             return edge_index, edge_type
         num_relations = self.num_relations
         num_query_relations = 2 * num_relations
-        query_keys = idx_h * num_query_relations + idx_r
         is_synthetic = edge_type >= num_relations
         relation = torch.where(is_synthetic, edge_type - num_relations, edge_type)
         head = torch.where(is_synthetic, edge_index[1], edge_index[0])
         tail = torch.where(is_synthetic, edge_index[0], edge_index[1])
-        remove = (torch.isin(head * num_query_relations + relation, query_keys)
-                  | torch.isin(tail * num_query_relations + relation + num_relations, query_keys))
+        # Every edge answers one forward query (head, r, tail) and one
+        # reciprocal query (tail, r^-1, head); key both forms like the batch.
+        query_keys = idx_h * num_query_relations + idx_r
+        forward_keys = head * num_query_relations + relation
+        reciprocal_keys = tail * num_query_relations + relation + num_relations
+        if self.query_edge_exclusion == "triple" and idx_t is not None:
+            query_keys = query_keys * self.num_entities + idx_t
+            forward_keys = forward_keys * self.num_entities + tail
+            reciprocal_keys = reciprocal_keys * self.num_entities + head
+        remove = torch.isin(forward_keys, query_keys) | torch.isin(reciprocal_keys, query_keys)
         if not torch.any(remove):
             return edge_index, edge_type
         keep = ~remove
@@ -281,9 +297,12 @@ class RelationalGNNEncoder(KGEModel):
         emb_r = self.normalize_relation_embeddings(self.input_dp_rel_real(self.relation_repr().index_select(0, idx_r)))
         return self.triple_score_fn(emb_h, emb_r, emb_t)
 
-    def forward_k_vs_all(self, x: torch.LongTensor) -> torch.FloatTensor:
+    def forward_k_vs_all(self, x: torch.LongTensor,
+                         query_tails: Optional[torch.LongTensor] = None) -> torch.FloatTensor:
+        """Score every entity as the tail of ``(h, r, ?)``; ``query_tails`` are the
+        training answers, used only by ``query_edge_exclusion="triple"``."""
         idx_h, idx_r = x[:, 0], x[:, 1]
-        edge_index, edge_type = self._graph_excluding_batch(idx_h, idx_r)
+        edge_index, edge_type = self._graph_excluding_batch(idx_h, idx_r, query_tails)
         entity_repr = self.encode(edge_index, edge_type)
         emb_h = self.normalize_head_entity_embeddings(self.input_dp_ent_real(entity_repr.index_select(0, idx_h)))
         emb_r = self.normalize_relation_embeddings(self.input_dp_rel_real(self.relation_repr().index_select(0, idx_r)))
@@ -306,10 +325,11 @@ class RelationalGNNEncoder(KGEModel):
         emb_t = self.normalize_tail_entity_embeddings(entity_repr.index_select(0, idx_t))
         return self.head_k_vs_all_score(emb_r, emb_t, entity_repr)
 
-    def forward(self, x: torch.LongTensor) -> torch.FloatTensor:
+    def forward(self, x: torch.LongTensor,
+                query_tails: Optional[torch.LongTensor] = None) -> torch.FloatTensor:
         """Route ``(B, 3)`` to :meth:`forward_triples`, ``(B, 2)`` to :meth:`forward_k_vs_all`."""
         if x.ndim != 2 or x.shape[1] not in (2, 3):
             raise ValueError(f"Expected a (B, 2) or (B, 3) LongTensor, got shape {tuple(x.shape)}")
         if x.shape[1] == 3:
             return self.forward_triples(x)
-        return self.forward_k_vs_all(x)
+        return self.forward_k_vs_all(x, query_tails)

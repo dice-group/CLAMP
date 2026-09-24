@@ -178,7 +178,25 @@ def test_gnn_graph_controls(gnn_graph, expected_edges):
 
 def test_query_edges_kept_when_exclusion_off():
     args = {**_toy_args("RGCN"), "train_set_idx": np.array([[0, 0, 1], [2, 0, 1]]),
-            "exclude_query_edges": False}
+            "query_edge_exclusion": "none"}
     model = MODEL_MAP["RGCN"](args=args).train()
     edge_index, _ = model._graph_excluding_batch(torch.tensor([0]), torch.tensor([0]))
     assert edge_index.shape[1] == 4
+
+
+def test_triple_exclusion_keeps_the_query_pairs_other_answers():
+    # (0, 0, ?) has two known answers; predicting 1 must hide only (0, 0, 1).
+    triples = np.array([[0, 0, 1], [0, 0, 2], [3, 1, 0]])
+    args = {**_toy_args("RGCN"), "train_set_idx": triples, "query_edge_exclusion": "triple"}
+    model = MODEL_MAP["RGCN"](args=args).train()
+    num_relations = args["num_relations"]
+    edge_index, edge_type = model._graph_excluding_batch(torch.tensor([0]), torch.tensor([0]), torch.tensor([1]))
+    remaining = {(int(s), int(r), int(d)) for (s, d), r in zip(edge_index.t(), edge_type)}
+    assert remaining == {(0, 0, 2), (2, num_relations, 0), (3, 1, 0), (0, 1 + num_relations, 3)}
+    # The reciprocal query (1, 0^-1, ?) with answer 0 hides the same triple.
+    edge_index, _ = model._graph_excluding_batch(
+        torch.tensor([1]), torch.tensor([num_relations]), torch.tensor([0]))
+    assert edge_index.shape[1] == 4
+    # Without answers it falls back to hiding every (0, 0, *) edge.
+    edge_index, _ = model._graph_excluding_batch(torch.tensor([0]), torch.tensor([0]))
+    assert edge_index.shape[1] == 2

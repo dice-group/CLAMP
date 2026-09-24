@@ -41,8 +41,8 @@ class KGE(RelationalGNNEncoder):
         """No propagation graph: nothing here consumes one."""
         return None, None
 
-    def _graph_excluding_batch(self, idx_h: torch.LongTensor,
-                               idx_r: torch.LongTensor) -> Tuple[None, None]:
+    def _graph_excluding_batch(self, idx_h: torch.LongTensor, idx_r: torch.LongTensor,
+                               idx_t: Optional[torch.LongTensor] = None) -> Tuple[None, None]:
         """No-op: with no message passing there is no edge to leak an answer along."""
         return None, None
 

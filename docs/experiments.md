@@ -5,7 +5,9 @@ it and what it does and does not establish. Numbers are read from
 `Experiments/<run>/report.json` (configuration, parameter count, runtime) and
 `Experiments/<run>/eval_report.json` (metrics).
 
-Nothing here is averaged over seeds. Every number is a single run.
+Every number is a single run unless its table gives a mean ± standard deviation
+over seeds (the CoDEx-S d = 32 comparison in
+[CoDEx-S with the literature recipe](#codex-s-with-the-literature-recipe)).
 
 ## Datasets
 
@@ -162,6 +164,116 @@ has not been measured. What *is* structural: the full-multivector geometric
 product costs `O(dim^2)` per transformed row, so `CliffordRGCN` at `dim=64`
 does about four times the per-edge work of the same model at `dim=32`.
 
+## CoDEx-S with the literature recipe
+
+The runs above use the KvsAll/BCE objective, train only tail queries while the
+evaluator also ranks heads, and stop at the last epoch. Those choices left even
+the encoder-free model far below the published ComplEx (0.266 vs 0.465). The
+runs in this section use the training recipe from the CoDEx paper's own LibKGE
+configs instead, available as opt-in flags:
+
+- `--reciprocal`: an inverse-relation table for the decoder; head queries
+  `(?, r, t)` are trained and answered as `(t, r^-1, ?)`.
+- `--scoring_technique 1vsAll`: softmax cross-entropy over all entities, one
+  row per triple.
+- `--init_param xavier_normal`, `--input_dropout_rate 0.07`, batch 1024.
+- `--eval_every 5 --early_stopping_patience 10`: the weights with the best
+  validation MRR are restored before the final evaluation, 400 epochs at most.
+
+Always with `--decoder ComplEx`. During training, validation ranks are filtered
+without the test split, so the validation MRR printed in the logs is lower than
+the final one; the final numbers below use the standard filter over all splits.
+
+### Reproducing the published baseline (d = 512)
+
+| Model | lr | Val MRR | Test MRR | Test H@1 | Test H@10 |
+|---|---|---|---|---|---|
+| KGE (ComplEx) | 3.4e-4 | 0.474 | **0.462** | 0.370 | 0.645 |
+| RGCN | 3.4e-4 | 0.403 | 0.392 | 0.282 | 0.610 |
+| GraphSAGE | 1e-3 | 0.356 | 0.346 | 0.225 | 0.580 |
+| GATv2 | 1e-3 | 0.338 | 0.325 | 0.214 | 0.545 |
+
+The encoder-free model matches the CoDEx paper's ComplEx (0.465), which
+validates the training and evaluation pipeline. Results in
+`Experiments/CoDEx-S-litrecipe/`; one seed; the query-edge exclusion was
+`pair` (see below). A second learning rate (1e-3 for RGCN, 3.4e-4 for the
+others) scored lower on test MRR for every GNN.
+
+### Embedding dimension (encoder-free ComplEx)
+
+| d | 32 | 64 | 128 | 256 | 512 |
+|---|---|---|---|---|---|
+| Test MRR | 0.363 | 0.371 | 0.418 | 0.454 | 0.462 |
+
+lr 3.4e-4, one seed, `Experiments/CoDEx-S-litrecipe/dims/`. The d = 64 run
+early-stopped at epoch 110 while the others kept improving to epoch 240–360,
+so its value is probably low; d = 256 stopped at the 400-epoch cap still
+improving slightly.
+
+### d = 32: which literature idea helps a GNN encoder?
+
+Phase 1 (`bash scripts/run_codexs_dim32_literature.sh`, results in
+`Experiments/CoDEx-S-dim32-literature/`) ran 13 configurations at lr 3.4e-4 and
+1e-3, one seed. It added two models and three graph controls:
+
+- `LTE`: shared bias-free linear map, BatchNorm and dropout on entity
+  embeddings, no graph (Zhang et al., WWW 2022).
+- `CompGCN`: composition-based encoder following the official layer
+  (Vashishth et al., ICLR 2020); needs `--reciprocal`.
+- `--gnn_graph random|none`: the training graph with random tails, or no
+  edges (Zhang et al.'s RAT and WNI controls).
+- `--query_edge_exclusion pair|triple|none`: which training edges each batch
+  hides from the propagation graph. `pair` (the default, and the only
+  behaviour before this change) hides every `(h, r, *)` edge of a query;
+  `triple` hides only the batch's own triples; `none` keeps everything, as the
+  official R-GCN and CompGCN code does. Validation and test edges are never in
+  the graph, so `none` does not leak evaluation answers.
+- `--gnn_edge_dropout`, `--gnn_residual`.
+
+Phase-1 test MRR at the learning rate with the better validation MRR:
+
+| Configuration | Test MRR |
+|---|---|
+| KGE | 0.360 |
+| LTE | 0.375 |
+| RGCN (2 layers, `pair`) / 1 layer / residual | 0.342 / 0.343 / 0.336 |
+| RGCN, `none` / `none` + edge dropout 0.4 | 0.371 / 0.372 |
+| RGCN, random graph / no graph | 0.357 / 0.354 |
+| CompGCN (1 layer, `pair`) / `none` / random graph / no graph | 0.361 / 0.358 / 0.355 / 0.354 |
+
+With `pair` exclusion, RGCN on the real graph scores below RGCN on a random
+graph or no graph; with `none`, the real graph helps. CompGCN is unaffected by
+the graph, which reproduces Zhang et al.'s finding.
+
+Phase 2 (`bash scripts/run_codexs_dim32_exclusion_seeds.sh`, results in
+`Experiments/CoDEx-S-dim32-exclusion/`) ran every encoder under each exclusion
+mode at lr 1e-3 (the rate phase 1 selected for all of them) over seeds 1–3.
+Test MRR, mean ± standard deviation:
+
+| Model | `pair` | `triple` | `none` |
+|---|---|---|---|
+| KGE (no graph) | | | 0.366 ± 0.005 |
+| LTE (no graph) | | | **0.375 ± 0.004** |
+| RGCN | 0.331 ± 0.009 | 0.342 ± 0.009 | **0.372 ± 0.004** |
+| GATv2 | 0.252 ± 0.016 | 0.337 ± 0.003 | 0.365 ± 0.008 |
+| GraphSAGE | 0.334 ± 0.006 | 0.235 ± 0.013 | **0.372 ± 0.002** |
+| CompGCN (1 layer) | 0.360 ± 0.004 | 0.323 ± 0.012 | 0.363 ± 0.005 |
+
+What this establishes:
+
+- `none` is the best exclusion mode for every encoder, and `pair`, the previous
+  default, costs RGCN and GraphSAGE about 0.04 and GATv2 0.11.
+- Under `none`, the four GNN encoders (0.363–0.372) tie the encoder-free model
+  (0.366 ± 0.005); none is ahead by more than about one standard deviation.
+- LTE, which uses no graph, is the best or tied-best model.
+- `triple` helps RGCN and GATv2 relative to `pair` but hurts GraphSAGE and
+  CompGCN badly. This is not explained yet.
+
+What it does not establish: only the learning rate was tuned (two values), and
+the other settings were taken from the CoDEx paper's d = 512 ComplEx config, so
+none of these models has been tuned at d = 32. Three seeds cannot separate
+differences below about 0.01.
+
 ## UMLS
 
 The first-gate dataset, used to establish that each encoder learns at all.
@@ -217,15 +329,19 @@ run on WN18RR.
 
 Ordered roughly by how much they limit the conclusions above.
 
-1. **No seed averaging anywhere.** Every number in this file is one run. The
-   CoDEx-S margins between encoders are small enough that this matters.
-2. **Clifford encoders use borrowed hyperparameters.** They have never been
+1. **Seed averaging only for the CoDEx-S d = 32 comparison.** Every other
+   number is one run, and the margins between encoders are small enough that
+   this matters.
+2. **No model is tuned at d = 32.** The literature-recipe runs tune only the
+   learning rate; dropout, batch size, regularisation, label smoothing and
+   layer count come from the CoDEx paper's d = 512 ComplEx config.
+3. **Clifford encoders use borrowed hyperparameters.** They have never been
    tuned in their own right; `scripts/sweep_codexs.py` would need its `MODELS`
    list extended to cover them.
-3. **WN18RR unresolved**, and its sweep is 3/12 done.
-4. **No like-for-like runtime measurement** of Clifford versus non-Clifford
+4. **WN18RR unresolved**, and its sweep is 3/12 done.
+5. **No like-for-like runtime measurement** of Clifford versus non-Clifford
    encoders.
-5. **Clifford encoders have only been run on CoDEx-S** — not UMLS, not WN18RR.
-6. **The evaluation set is reduced on WN18RR** by the train-only entity
+6. **Clifford encoders have only been run on CoDEx-S** — not UMLS, not WN18RR.
+7. **The evaluation set is reduced on WN18RR** by the train-only entity
    vocabulary, so those numbers cannot be compared to published results even
    once training works.

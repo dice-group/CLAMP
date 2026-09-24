@@ -13,3 +13,5 @@ scripts/pyg_reference/*.log
 KGs/
 scripts/
 tests/
+checkpoints/
+docs/
