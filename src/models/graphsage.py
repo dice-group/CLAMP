@@ -35,7 +35,7 @@ class RelationalSAGELayer(torch.nn.Module):
         # root_weight=False: the node's own contribution is added once below via root_lin,
         # not once per relation (SAGEConv would otherwise add it inside every relation's conv).
         self.convs = torch.nn.ModuleList([
-            SAGEConv(in_dim, out_dim, aggr=aggregator, root_weight=False)
+            SAGEConv(in_dim, out_dim, aggr=aggregator, root_weight=False, bias=False)
             for _ in range(num_relations)
         ])
         self.root_lin = torch.nn.Linear(in_dim, out_dim)

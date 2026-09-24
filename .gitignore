@@ -4,3 +4,12 @@ __pycache__/
 Experiments/
 *.egg-info/
 .DS_Store
+.venv/
+datasets/
+configs/
+reports/
+scripts/data/
+scripts/pyg_reference/*.log
+KGs/
+scripts/
+tests/

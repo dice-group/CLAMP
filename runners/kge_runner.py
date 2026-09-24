@@ -1,57 +1,80 @@
-"""Training entry point: load a KG via dicee, train one GNN-KGE model, evaluate.
-
-Structured after ``literal-embeddings/runners/kge_runner.py``: load the
-knowledge graph with dicee's own ``KG``/``read_or_load_kg``, then hand off to
-a plain ``lightning.pytorch.Trainer``. Unlike literal-embeddings this project
-does not need a custom ``LightningModule`` wrapper: every model here extends
-dicee's ``BaseKGE``, which already *is* a ``lightning.pytorch.LightningModule``
-(``BaseKGELightning`` implements ``training_step``/``configure_optimizers``),
-so the model can be handed to ``Trainer.fit`` directly.
-"""
+"""Training entry point: load a KG, train one GNN-KGE model, evaluate."""
+import argparse
+import copy
 import time
 
-import lightning.pytorch as pl
 import torch
-from dicee.knowledge_graph import KG
-from dicee.static_funcs import read_or_load_kg, store
 
 from src.evaluator import Evaluator
-from src.static_funcs import get_dataloader, get_full_storage_path, get_model, prepare_experiment_dir, save_report
+from src.kg_loader import load_kg
+from src.static_funcs import (
+    get_dataloader, get_full_storage_path, get_model, get_optimizer,
+    prepare_experiment_dir, save_model_artifacts, save_report, smooth_labels,
+)
 
 
 def train_gnn_kge_model(args) -> dict:
     """Train one of RGCN / GATv2 / GraphSAGE and return its evaluation report."""
-    args.learning_rate = args.lr
     args.full_storage_path = get_full_storage_path(args)
     prepare_experiment_dir(args.full_storage_path)
     print(f"[{args.model}] storing experiment at {args.full_storage_path}")
 
     torch.manual_seed(args.random_seed)
-    pl.seed_everything(args.random_seed, verbose=False)
+    device = torch.device("cuda" if args.accelerator == "gpu" else "cpu")
 
     start_time = time.time()
 
-    # (1) Load & index the KG. path_for_serialization writes entity_to_idx.csv /
-    # relation_to_idx.csv into full_storage_path, which dicee's own `store()` below expects.
-    args.path_for_serialization = args.full_storage_path
-    entity_dataset = read_or_load_kg(args, KG)
+    # (1) Load & index the KG.
+    entity_dataset = load_kg(args.dataset_dir)
 
-    # (2) Build the model (RGCN / GATv2 / GraphSAGE), all instances of dicee's BaseKGE.
-    model = get_model(args, entity_dataset)
+    # (2) Build the model (RGCN / GATv2 / GraphSAGE) and its training loader.
+    model = get_model(args, entity_dataset).to(device)
     train_dataloader = get_dataloader(args, entity_dataset)
+    optimizer = get_optimizer(args, model.parameters())
+    label_smoothing = float(getattr(args, "label_smoothing", 0.0) or 0.0)
+    num_entities = entity_dataset.num_entities
+    if args.scoring_technique == "1vsAll":
+        loss_fn = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+    else:
+        bce = torch.nn.BCEWithLogitsLoss()
+        loss_fn = lambda scores, y: bce(scores, smooth_labels(y, label_smoothing, num_entities))  # noqa: E731
 
-    # (3) Train. `model` is itself a lightning.pytorch.LightningModule (via BaseKGE ->
-    # BaseKGELightning), so no custom training loop / LightningModule wrapper is needed.
-    trainer = pl.Trainer(
-        max_epochs=args.num_epochs,
-        accelerator=getattr(args, "accelerator", "cpu"),
-        devices=1,
-        logger=False,
-        enable_checkpointing=False,
-        enable_progress_bar=True,
-        deterministic=True,
-    )
-    trainer.fit(model, train_dataloader)
+    eval_every = int(getattr(args, "eval_every", 0) or 0)
+    patience = int(getattr(args, "early_stopping_patience", 0) or 0)
+    val_evaluator = Evaluator(args=argparse.Namespace(**{**vars(args), "eval_model": "val"}))
+    best_val_mrr, best_epoch, best_state, stale = -1.0, None, None, 0
+
+    # (3) Train.
+    model.train()
+    for epoch in range(args.num_epochs):
+        epoch_losses = []
+        for x_batch, y_batch in train_dataloader:
+            x_batch, y_batch = x_batch.to(device), y_batch.to(device)
+            optimizer.zero_grad()
+            scores = model(x_batch)
+            loss = loss_fn(scores, y_batch)
+            loss.backward()
+            optimizer.step()
+            epoch_losses.append(loss.item())
+        if (epoch + 1) % max(1, args.num_epochs // 10) == 0 or epoch == 0:
+            print(f"[{args.model}] epoch {epoch + 1}/{args.num_epochs} "
+                  f"loss {sum(epoch_losses) / len(epoch_losses):.4f}")
+        if eval_every and (epoch + 1) % eval_every == 0:
+            val_mrr = val_evaluator.eval(dataset=entity_dataset, trained_model=model,
+                                         during_training=True)["Val"]["MRR"]
+            model.train()
+            if val_mrr > best_val_mrr:
+                best_val_mrr, best_epoch, stale = val_mrr, epoch + 1, 0
+                best_state = copy.deepcopy(model.state_dict())
+            else:
+                stale += 1
+            print(f"[{args.model}] epoch {epoch + 1} val MRR {val_mrr:.4f} "
+                  f"(best {best_val_mrr:.4f} @ {best_epoch})")
+            if patience and stale >= patience:
+                break
+    if best_state is not None:
+        model.load_state_dict(best_state)
+        args.best_epoch = best_epoch
 
     # (4) Evaluate with the filtered ranking protocol.
     model.eval()
@@ -60,10 +83,10 @@ def train_gnn_kge_model(args) -> dict:
 
     runtime_seconds = time.time() - start_time
 
-    # (5) Persist model + report in dicee's usual experiment-folder layout.
+    # (5) Persist model + report.
     if args.save_experiment:
         model.to("cpu")
-        store(trained_model=model, model_name="model", full_storage_path=args.full_storage_path)
+        save_model_artifacts(args, model, entity_dataset)
         save_report(args, model, entity_dataset, eval_report, runtime_seconds)
 
     print(f"[{args.model}] finished in {runtime_seconds:.1f}s -> {args.full_storage_path}")

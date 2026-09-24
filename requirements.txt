@@ -1,9 +1,5 @@
-# Tested with: Python 3.13.5, torch 2.9.0+cu128, torch_geometric 2.8.0.post1,
-# lightning 2.6.0, dicee 0.3.3 (editable install from ../dice-embeddings).
-dicee
+# Tested with: Python 3.13.5, torch 2.9.0+cu128, torch_geometric 2.8.0.post1.
 torch>=2.5.1
 torch_geometric>=2.5
-lightning>=2.6
 numpy
-pandas
 pytest

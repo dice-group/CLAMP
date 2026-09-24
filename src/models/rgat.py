@@ -8,9 +8,12 @@ labels, so it cannot be dropped onto a knowledge graph unmodified. We keep
 `torch_geometric`'s reference ``GATv2Conv`` layer exactly as published and
 make it relation-aware the way the layer itself was designed to consume
 edge information: relation embeddings are passed in as ``edge_attr``
-(``GATv2Conv``'s ``edge_dim`` argument), so relation identity enters both the
-attention coefficients and the messages, without inventing a new attention
-formula. This differs from Relational GAT (Busbridge et al. 2019), which
+(``GATv2Conv``'s ``edge_dim`` argument), so relation identity enters the
+attention coefficients. Message values are transformed source states, not
+relation-specific transforms; edge labels affect their weighting only.
+In particular, singleton-neighbour softmax cannot distinguish edge labels.
+PyG's default self-loops use mean incoming edge features. This differs from
+Relational GAT (Busbridge et al. 2019), which
 learns per-relation attention parameters instead of per-relation edge
 features; that is a legitimate alternative we do not implement here.
 

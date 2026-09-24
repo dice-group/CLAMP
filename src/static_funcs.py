@@ -1,30 +1,20 @@
-"""Small glue functions: model/dataloader construction, experiment storage.
-
-Structured after ``literal-embeddings/src/static_train_utils.py`` and
-``src/static_funcs.py``.
-"""
+"""Small glue functions: model/dataloader/optimizer construction, experiment storage."""
+import csv
 import json
 import os
 from datetime import datetime
 from typing import Optional
 
 import numpy as np
+import torch
 from torch.utils.data import DataLoader
 
-from src.dataset import KvsAll, collate_fn
+from src.dataset import KvsAll, OneVsAll, add_reciprocal_triples, collate_fn
 from src.models import MODEL_MAP
 
 
 def get_model(args, entity_dataset):
-    """Instantiate one of RGCN / GATv2 / GraphSAGE as a plain ``BaseKGE`` model.
-
-    Unlike dicee's ``intialize_model``, this does not go through dicee's
-    ``MODEL_REGISTRY`` (these models are not registered there — see
-    README.md for why) — it looks the class up in this project's own
-    ``src.models.MODEL_MAP`` instead. Everything else about the resulting
-    object (constructor signature, ``forward``/``forward_triples``/
-    ``forward_k_vs_all`` contract) is identical to a dicee-registered model.
-    """
+    """Instantiate one of RGCN / GATv2 / GraphSAGE, looked up in ``src.models.MODEL_MAP``."""
     try:
         model_cls = MODEL_MAP[args.model]
     except KeyError as exc:
@@ -38,7 +28,13 @@ def get_model(args, entity_dataset):
 
 
 def get_dataloader(args, entity_dataset) -> DataLoader:
-    train_dataset = KvsAll(train_set_idx=entity_dataset.train_set, num_entities=entity_dataset.num_entities)
+    triples = entity_dataset.train_set
+    if getattr(args, "reciprocal", False):
+        triples = add_reciprocal_triples(triples, entity_dataset.num_relations)
+    if args.scoring_technique == "1vsAll":
+        train_dataset = OneVsAll(train_set_idx=triples)
+    else:
+        train_dataset = KvsAll(train_set_idx=triples, num_entities=entity_dataset.num_entities)
     return DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -46,6 +42,38 @@ def get_dataloader(args, entity_dataset) -> DataLoader:
         num_workers=args.num_core,
         collate_fn=collate_fn,
     )
+
+
+_OPTIMIZERS = {
+    "Adam": torch.optim.Adam,
+    "AdamW": torch.optim.AdamW,
+    "SGD": torch.optim.SGD,
+    "NAdam": torch.optim.NAdam,
+    "Adagrad": torch.optim.Adagrad,
+    "ASGD": torch.optim.ASGD,
+}
+
+
+def smooth_labels(y_batch: torch.Tensor, label_smoothing: float, num_entities: int) -> torch.Tensor:
+    """ConvE-style KvsAll target smoothing (Dettmers et al. 2018).
+
+    Shifts each hard ``0`` to ``label_smoothing / num_entities`` and each hard
+    ``1`` to ``(1 - label_smoothing) + label_smoothing / num_entities``, so a
+    single positive isn't asked to outweigh ``num_entities - 1`` negatives in
+    the BCE loss on large, sparse-positive-rate graphs (e.g. WN18RR, where
+    the KvsAll positive rate is ~0.003% versus ~5% on UMLS).
+    """
+    if not label_smoothing:
+        return y_batch
+    return y_batch * (1.0 - label_smoothing) + label_smoothing / num_entities
+
+
+def get_optimizer(args, params) -> torch.optim.Optimizer:
+    try:
+        optim_cls = _OPTIMIZERS[args.optim]
+    except KeyError as exc:
+        raise ValueError(f"Unknown optimizer '{args.optim}'. Available: {sorted(_OPTIMIZERS)}") from exc
+    return optim_cls(params, lr=args.lr, weight_decay=args.weight_decay)
 
 
 def get_full_storage_path(args) -> str:
@@ -81,3 +109,20 @@ def save_report(args, model, entity_dataset, eval_report: Optional[dict], runtim
     if eval_report:
         with open(os.path.join(args.full_storage_path, "eval_report.json"), "w") as f:
             json.dump(eval_report, f, indent=4)
+
+
+def _write_idx_csv(path: str, name_to_idx: dict, column: str) -> None:
+    with open(path, "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["", column])
+        for name, idx in sorted(name_to_idx.items(), key=lambda kv: kv[1]):
+            writer.writerow([idx, name])
+
+
+def save_model_artifacts(args, model, entity_dataset) -> None:
+    """Save ``model.pt`` + ``entity_to_idx.csv``/``relation_to_idx.csv``."""
+    torch.save(model.state_dict(), os.path.join(args.full_storage_path, "model.pt"))
+    _write_idx_csv(os.path.join(args.full_storage_path, "entity_to_idx.csv"),
+                    entity_dataset.entity_to_idx, "entity")
+    _write_idx_csv(os.path.join(args.full_storage_path, "relation_to_idx.csv"),
+                    entity_dataset.relation_to_idx, "relation")
