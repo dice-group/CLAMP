@@ -1,7 +1,3 @@
-"""Main entry point: train one GNN-based KGE model (RGCN / GATv2 / GraphSAGE).
-
-    python main.py --model RGCN --dataset_dir KGs/UMLS --num_epochs 200
-"""
 from runners.kge_runner import train_gnn_kge_model
 from src.config import get_default_arguments
 

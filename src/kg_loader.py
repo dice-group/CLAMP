@@ -1,10 +1,5 @@
-"""Minimal local KG loading: read train/valid/test triple files, index them.
-
-Reads plain whitespace/tab-separated ``head relation tail`` triple files
-(``KGs/<dataset>/{train,valid,test}.txt``); nothing else is supported.
-"""
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 import numpy as np
@@ -12,8 +7,6 @@ import numpy as np
 
 @dataclass
 class KG:
-    """Indexed knowledge graph: train/valid/test triples as ``(N, 3)`` int arrays."""
-
     train_set: np.ndarray
     valid_set: Optional[np.ndarray]
     test_set: Optional[np.ndarray]
@@ -39,33 +32,32 @@ def _read_triples(path: str):
             if not parts:
                 continue
             if len(parts) != 3:
-                raise ValueError(f"Expected 'head relation tail' per line in {path}, got: {line!r}")
+                raise ValueError(
+                    f"Expected 'head relation tail' per line in {path}, got: {line!r}"
+                )
             triples.append(tuple(parts))
     return triples
 
 
-def load_kg(dataset_dir: str) -> KG:
-    """Load ``{train,valid,test}.txt`` from ``dataset_dir`` into indexed triples.
-
-    Entity/relation vocabularies are built from the training split only (the
-    standard closed-world KGE convention: validation/test facts about an
-    entity or relation absent from training are unscorable), sorted for a
-    deterministic, checkpoint-stable id assignment.
-    """
+def load_kg(dataset_dir: str, vocab_from_all_splits: bool = False) -> KG:
     train = _read_triples(os.path.join(dataset_dir, "train.txt"))
     valid = _read_triples(os.path.join(dataset_dir, "valid.txt"))
     test = _read_triples(os.path.join(dataset_dir, "test.txt"))
     if not train:
         raise ValueError(f"No training triples found under {dataset_dir}")
 
-    entities = sorted({h for h, _, _ in train} | {t for _, _, t in train})
-    relations = sorted({r for _, r, _ in train})
+    vocab_source = train + valid + test if vocab_from_all_splits else train
+    entities = sorted({h for h, _, _ in vocab_source} | {t for _, _, t in vocab_source})
+    relations = sorted({r for _, r, _ in vocab_source})
     entity_to_idx = {e: i for i, e in enumerate(entities)}
     relation_to_idx = {r: i for i, r in enumerate(relations)}
 
     def index(triples):
-        rows = [(entity_to_idx[h], relation_to_idx[r], entity_to_idx[t])
-                for h, r, t in triples if h in entity_to_idx and r in relation_to_idx and t in entity_to_idx]
+        rows = [
+            (entity_to_idx[h], relation_to_idx[r], entity_to_idx[t])
+            for h, r, t in triples
+            if h in entity_to_idx and r in relation_to_idx and t in entity_to_idx
+        ]
         return np.asarray(rows, dtype=np.int64).reshape(-1, 3)
 
     return KG(

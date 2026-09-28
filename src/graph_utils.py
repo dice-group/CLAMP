@@ -1,41 +1,12 @@
-"""Build message-passing graphs (edge_index / edge_type) from indexed triples.
-
-All three GNN encoders in ``src/models`` need the training graph in
-``torch_geometric``'s ``edge_index`` / ``edge_type`` format rather than flat
-``(h, r, t)`` triples. This module builds that graph (see
-``RelationalGNNEncoder`` in ``src/models/base_gnn.py``) and is the only place
-inverse-relation bookkeeping happens, so every encoder sees the same
-convention.
-
-Convention (matches Schlichtkrull et al. 2018, R-GCN, Section 4.1): for every
-training triple ``(h, r, t)`` the propagation graph also contains the inverse
-edge ``(t, r + num_relations, h)``. Message passing therefore has
-``2 * num_relations`` edge types; the decoder still scores triples with the
-original ``num_relations`` relation embeddings.
-"""
 from typing import Tuple
 
 import numpy as np
 import torch
 
 
-def build_relational_edge_index(train_set_idx, num_relations: int,
-                                add_inverse_edges: bool = True) -> Tuple[torch.LongTensor, torch.LongTensor]:
-    """Convert indexed training triples into a message-passing graph.
-
-    Args:
-        train_set_idx: ``(N, 3)`` integer array/tensor of ``[head, relation, tail]``.
-        num_relations: Number of distinct relations used by the decoder.
-        add_inverse_edges: If True, add a reverse edge ``(t, r + num_relations, h)``
-            for every training triple ``(h, r, t)`` so information can flow against
-            the original edge direction, as in the R-GCN reference implementation.
-
-    Returns:
-        edge_index: ``(2, E)`` LongTensor, row 0 source, row 1 target.
-        edge_type: ``(E,)`` LongTensor of relation ids in ``[0, num_relations_gnn)``,
-            where ``num_relations_gnn`` is ``2 * num_relations`` if inverse edges are
-            added and ``num_relations`` otherwise.
-    """
+def build_relational_edge_index(
+    train_set_idx, num_relations: int, add_inverse_edges: bool = True
+) -> Tuple[torch.LongTensor, torch.LongTensor]:
     if isinstance(train_set_idx, torch.Tensor):
         triples = train_set_idx.long()
     else:

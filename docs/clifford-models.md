@@ -1,9 +1,18 @@
 # Clifford-algebra encoders
 
-Three encoders — `CliffordRGCN`, `CliffordGATv2`, `CliffordGraphSAGE` — that
-keep the message-passing structure of `RGCN` / `GATv2` / `GraphSAGE` and replace
-only their learned linear maps with geometric products in a Clifford algebra.
-The non-Clifford models are untouched, so the pairs are directly comparable.
+Three encoders — `CliffordRGCN`, `CliffordGATv2`, `CliffordGraphSAGE`.
+`CliffordRGCN` and `CliffordGraphSAGE` keep the message-passing structure of
+`RGCN` / `GraphSAGE` and replace only their learned linear maps with geometric
+products in a Clifford algebra. `CliffordGATv2` is a redesign rather than a
+substitution: the relation multiplies the neighbour state, so it enters the
+values as well as the attention; the self term sits outside the attention
+instead of a self-loop inside it; and heads are averaged on every layer. A
+gain of `CliffordGATv2` over `GATv2` therefore cannot be attributed to the
+Clifford product alone without a matched dense control.
+
+The layers are not equivariant under the Clifford group: coefficient-wise
+activations and biases depend on the basis. The geometric product serves as a
+structured linear map with `dim` parameters per relation.
 
 Results are in [`experiments.md`](experiments.md#clifford-encoders).
 
@@ -71,12 +80,13 @@ multiply it replaces — the saving is in parameters, not in arithmetic.
 
 ## Layer by layer
 
-Each layer keeps its original's aggregation and structure exactly.
+`CliffordLinear`, `CliffordRGCNConv` and the SAGE layers keep their original's
+aggregation and structure exactly; `CliffordGATv2Conv` does not (see above).
 
 | Clifford layer | Replaces | What changes |
 |---|---|---|
 | `CliffordLinear` | `nn.Linear` as a root/self transform | `x * w + b` for a learned multivector `w` |
-| `CliffordRGCNConv` | `RGCNConv` | Per-relation `w_r` instead of `W_r`; messages `x_j * w_r`, mean-aggregated (`RGCNConv`'s `aggr='mean'`, the paper's `1/c_{i,r}`); shared `CliffordLinear` self-loop |
+| `CliffordRGCNConv` | `RGCNConv` | Per-relation `w_r` instead of `W_r`; messages `x_j * w_r`, averaged per (target, relation) and summed over relations (`RGCNConv`'s `aggr='mean'`, the paper's `1/c_{i,r}`); shared `CliffordLinear` self-loop |
 | `CliffordConv` | single-relation `SAGEConv` | Messages `x_j * w`, aggregator configurable via `--sage_aggregator` |
 | `CliffordRelationalSAGELayer` | `RelationalSAGELayer` | One `CliffordConv` per relation, summed, plus one shared root transform |
 | `CliffordGATv2Conv` | `GATv2Conv` | Query/key/value are geometric products; the attention logit uses `scalar_product` in place of the dot product with `a` |
@@ -100,9 +110,9 @@ relevant docstring.
 
 1. **`embedding_dim` must be a power of two.** An embedding is one complete
    multivector and Cl(n, 0) has `2**n` blades.
-2. **`--num_bases` is ignored by `CliffordRGCN`.** Basis decomposition
-   factorises a stack of per-relation *matrices*; the relation operator here is
-   already a single multivector, so there is nothing to decompose.
+2. **`--num_bases` is ignored by `CliffordRGCN`.** A multivector basis,
+   `w_r = sum_b c_rb v_b`, would be possible, but each `w_r` already has only
+   `dim` parameters, so it is not implemented.
 3. **Attention heads are averaged at every layer, not concatenated on hidden
    layers** as in the GAT/GATv2 papers. Concatenation changes the width, but a
    multivector's width is fixed by the algebra, so there is no

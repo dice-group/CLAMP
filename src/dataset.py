@@ -1,13 +1,3 @@
-"""KvsAll and 1vsAll training datasets.
-
-KvsAll builds one ``(head, relation)`` row per unique pair seen in training,
-with a multi-hot target vector over all entities. 1vsAll (Lacroix et al.
-2018; the CoDEx paper's LibKGE baselines) keeps one row per triple whose
-target is the single tail index, scored with softmax cross-entropy.
-
-With ``reciprocal=True`` each triple ``(h, r, t)`` also contributes the
-reciprocal query ``(t, r + num_relations, h)``, so head prediction is trained.
-"""
 from collections import defaultdict
 
 import numpy as np
@@ -16,7 +6,6 @@ from torch.utils.data import Dataset
 
 
 def mapping_from_first_two_cols_to_third(triples: np.ndarray) -> dict:
-    """Group ``(h, r, t)`` rows into ``{(h, r): [t, ...]}``."""
     store = defaultdict(list)
     for h, r, t in triples:
         store[(int(h), int(r))].append(int(t))
@@ -24,20 +13,14 @@ def mapping_from_first_two_cols_to_third(triples: np.ndarray) -> dict:
 
 
 def add_reciprocal_triples(triples: np.ndarray, num_relations: int) -> np.ndarray:
-    """Append ``(t, r + num_relations, h)`` for every ``(h, r, t)``."""
     triples = np.asarray(triples)
-    inverse = np.stack([triples[:, 2], triples[:, 1] + num_relations, triples[:, 0]], axis=1)
+    inverse = np.stack(
+        [triples[:, 2], triples[:, 1] + num_relations, triples[:, 0]], axis=1
+    )
     return np.concatenate([triples, inverse], axis=0)
 
 
 class KvsAll(Dataset):
-    """KvsAll dataset: ``x = (h, r)``, ``y`` is a multi-hot vector over entities.
-
-    Args:
-        train_set_idx: ``(N, 3)`` integer array of indexed ``[h, r, t]`` triples.
-        num_entities: Size of the multi-hot target vector.
-    """
-
     def __init__(self, train_set_idx: np.ndarray, num_entities: int):
         super().__init__()
         assert len(train_set_idx) > 0
@@ -56,8 +39,6 @@ class KvsAll(Dataset):
 
 
 class OneVsAll(Dataset):
-    """1vsAll dataset: ``x = (h, r)``, ``y`` is the tail's entity index."""
-
     def __init__(self, train_set_idx: np.ndarray):
         super().__init__()
         triples = torch.as_tensor(np.asarray(train_set_idx), dtype=torch.long)
