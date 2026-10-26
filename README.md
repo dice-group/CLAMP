@@ -47,8 +47,7 @@ src/models/
 ## Results
 
 Each dense encoder next to its Clifford counterpart, in which every per-relation matrix is replaced
-by one multivector per relation. Earlier results are recorded in
-[docs/experiments.md](docs/experiments.md).
+by one multivector per relation.
 
 **Recipe, identical for every row:**
 - **Scoring and loss:** DistMult decoder, 1vsAll with reciprocal relations, filtered evaluation of
