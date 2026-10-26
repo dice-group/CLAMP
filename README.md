@@ -46,70 +46,63 @@ src/models/
 
 ## Results
 
-[Full configurations and runtimes](docs/experiments.md).
+Each dense encoder next to its Clifford counterpart, in which every per-relation matrix is replaced
+by one multivector per relation. Earlier results are recorded in
+[docs/experiments.md](docs/experiments.md).
 
-### UMLS
+**Recipe, identical for every row:**
+- **Scoring and loss:** DistMult decoder, 1vsAll with reciprocal relations, filtered evaluation of
+  tail queries in both directions.
+- **Optimisation:** Adagrad at lr 0.1, input dropout 0.2, xavier initialisation, batch 1024.
+- **Stopping:** at most 300 epochs, validation every 25 epochs, early stopping with patience 4.
+- **Encoder settings:** query-edge exclusion none; dense RGCN with 2 bases; 4 heads for GATv2 and
+  CliffordGATv2.
 
-Config: DistMult, dim=64, Adam, lr=0.001, 1vsAll, reciprocal=true, batch=512, epochs=300, eval_every=50, seed=1.
+"2L linear" removes the activation between the two layers. Params is the total parameter count,
+embedding tables included.
 
-| Model | Train MRR | Train Hits@1 | Train Hits@3 | Train Hits@10 | Test MRR | Test Hits@1 | Test Hits@3 | Test Hits@10 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| [RGCN](Experiments/distmult-gnn-kge-300ep-20260928/UMLS/RGCN_DistMult/eval_report.json) | 0.9472 | 0.8993 | 0.9948 | 0.9991 | 0.8922 | 0.8048 | 0.9758 | 0.9947 |
-| [GATv2](Experiments/distmult-gnn-kge-300ep-20260928/UMLS/GATv2_DistMult/eval_report.json) | 0.9327 | 0.8735 | 0.9905 | 0.9993 | 0.8909 | 0.8011 | 0.9781 | 0.9962 |
-| [GraphSAGE](Experiments/distmult-gnn-kge-300ep-20260928/UMLS/GraphSAGE_DistMult/eval_report.json) | 0.6506 | 0.5214 | 0.7308 | 0.8721 | 0.6480 | 0.5219 | 0.7277 | 0.8669 |
-| [KGE (DistMult)](Experiments/distmult-gnn-kge-300ep-20260928/UMLS/KGE_DistMult/eval_report.json) | 0.9881 | 0.9765 | 0.9996 | 1.0000 | 0.9073 | 0.8374 | 0.9750 | 0.9970 |
+### CoDEx-S, d = 32 (seed 1)
 
-Config: ComplEx, dim=64, Adam, lr=0.001, 1vsAll, reciprocal=true, batch=512, epochs=300, eval_every=50, seed=1.
+Clifford models use Cl(0,1), i.e. 16 complex channels.
 
-| Model | Train MRR | Train Hits@1 | Train Hits@3 | Train Hits@10 | Test MRR | Test Hits@1 | Test Hits@3 | Test Hits@10 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| [KGE (ComplEx)](Experiments/distmult-gnn-kge-300ep-20260928/UMLS/KGE_ComplEx/eval_report.json) | 0.9805 | 0.9612 | 0.9999 | 1.0000 | 0.8869 | 0.7897 | 0.9834 | 0.9962 |
+| Model | Params | Train MRR | Test MRR | Test H@1 | Test H@10 |
+|---|---:|---:|---:|---:|---:|
+| RGCN 1L | 71,048 | 0.521 | 0.372 | 0.258 | 0.604 |
+| CliffordRGCN 1L | 70,528 | 0.541 | 0.379 | 0.266 | 0.608 |
+| RGCN 2L | 74,320 | 0.399 | 0.346 | 0.238 | 0.557 |
+| CliffordRGCN 2L | 73,280 | 0.428 | 0.346 | 0.239 | 0.561 |
+| RGCN 2L linear | 74,320 | 0.510 | 0.370 | 0.257 | 0.598 |
+| CliffordRGCN 2L linear | 73,280 | 0.532 | 0.370 | 0.258 | 0.595 |
+| GATv2 2L | 86,368 | 0.398 | 0.343 | 0.233 | 0.562 |
+| CliffordGATv2 2L | 74,304 | 0.501 | 0.376 | 0.267 | 0.593 |
+| GraphSAGE 2L | 241,920 | 0.435 | 0.363 | 0.248 | 0.590 |
+| CliffordGraphSAGE 2L | 73,280 | 0.423 | 0.343 | 0.232 | 0.568 |
 
-Config: RotatE, dim=64, Adam, lr=0.001, 1vsAll, reciprocal=true, batch=512, epochs=300, eval_every=50, seed=1.
+### CoDEx-S, d = 128 (seed 1)
 
-| Model | Train MRR | Train Hits@1 | Train Hits@3 | Train Hits@10 | Test MRR | Test Hits@1 | Test Hits@3 | Test Hits@10 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| [KGE (RotatE)](Experiments/distmult-gnn-kge-300ep-20260928/UMLS/KGE_RotatE/eval_report.json) | 0.8708 | 0.7618 | 0.9795 | 0.9927 | 0.8062 | 0.6513 | 0.9576 | 0.9864 |
+Clifford models in Cl(0,1) (64 complex channels) and in Cl(7,0) (one 128-coefficient multivector).
 
+| Model | Params | Train MRR | Test MRR | Test H@1 | Test H@10 |
+|---|---:|---:|---:|---:|---:|
+| RGCN 1L | 320,552 | 0.962 | 0.424 | 0.313 | 0.639 |
+| CliffordRGCN 1L, Cl(0,1) | 282,112 | 0.955 | 0.413 | 0.298 | 0.641 |
+| CliffordRGCN 1L, Cl(7,0) | 282,112 | 0.924 | 0.404 | 0.286 | 0.634 |
+| RGCN 2L | 370,000 | 0.630 | 0.360 | 0.248 | 0.575 |
+| CliffordRGCN 2L, Cl(0,1) | 293,120 | 0.763 | 0.381 | 0.272 | 0.597 |
+| CliffordRGCN 2L, Cl(7,0) | 293,120 | 0.706 | 0.379 | 0.266 | 0.605 |
+| RGCN 2L linear | 370,000 | 0.935 | 0.419 | 0.303 | 0.649 |
+| CliffordRGCN 2L linear, Cl(0,1) | 293,120 | 0.955 | 0.413 | 0.303 | 0.639 |
+| CliffordRGCN 2L linear, Cl(7,0) | 293,120 | 0.906 | 0.395 | 0.275 | 0.629 |
+| GATv2 2L | 529,792 | 0.539 | 0.381 | 0.265 | 0.606 |
+| CliffordGATv2 2L, Cl(0,1) | 297,216 | 0.910 | 0.404 | 0.291 | 0.634 |
+| CliffordGATv2 2L, Cl(7,0) | 297,216 | 0.818 | 0.389 | 0.271 | 0.624 |
+| GraphSAGE 2L | 3,056,640 | 0.490 | 0.370 | 0.257 | 0.591 |
+| CliffordGraphSAGE 2L, Cl(0,1) | 293,120 | 0.514 | 0.362 | 0.249 | 0.591 |
+| CliffordGraphSAGE 2L, Cl(7,0) | 293,120 | 0.612 | 0.360 | 0.243 | 0.585 |
 
-### Kinship
+### CoDEx-M, d = 32 (mean of seeds 1–2)
 
-Config: dim=64, lr=0.001, batch=512, epochs=300, eval_every=50.
-
-Results pending.
-
-### CoDEx-S
-
-Config: DistMult, dim=64, Adam, lr=0.001, 1vsAll, reciprocal=true, batch=512, epochs=300, eval_every=50, seed=1.
-
-| Model | Train MRR | Train Hits@1 | Train Hits@3 | Train Hits@10 | Test MRR | Test Hits@1 | Test Hits@3 | Test Hits@10 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| [RGCN](Experiments/distmult-gnn-kge-300ep-20260928/CoDEx-S/RGCN_DistMult/eval_report.json) | 0.3910 | 0.2725 | 0.4458 | 0.6278 | 0.2938 | 0.1901 | 0.3299 | 0.5030 |
-| [GATv2](Experiments/distmult-gnn-kge-300ep-20260928/CoDEx-S/GATv2_DistMult/eval_report.json) | 0.3491 | 0.2358 | 0.3964 | 0.5763 | 0.3345 | 0.2311 | 0.3734 | 0.5367 |
-| [GraphSAGE](Experiments/distmult-gnn-kge-300ep-20260928/CoDEx-S/GraphSAGE_DistMult/eval_report.json) | 0.2075 | 0.1099 | 0.2362 | 0.4126 | 0.1845 | 0.0960 | 0.2032 | 0.3734 |
-| [KGE (DistMult)](Experiments/distmult-gnn-kge-300ep-20260928/CoDEx-S/KGE_DistMult/eval_report.json) | 0.9646 | 0.9401 | 0.9878 | 0.9978 | 0.4026 | 0.2888 | 0.4562 | 0.6209 |
-
-Config: ComplEx, dim=64, Adam, lr=0.001, 1vsAll, reciprocal=true, batch=512, epochs=300, eval_every=50, seed=1.
-
-| Model | Train MRR | Train Hits@1 | Train Hits@3 | Train Hits@10 | Test MRR | Test Hits@1 | Test Hits@3 | Test Hits@10 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| [KGE (ComplEx)](Experiments/distmult-gnn-kge-300ep-20260928/CoDEx-S/KGE_ComplEx/eval_report.json) | 0.9721 | 0.9499 | 0.9943 | 0.9993 | 0.3953 | 0.2823 | 0.4516 | 0.6078 |
-
-Config: RotatE, dim=64, Adam, lr=0.001, 1vsAll, reciprocal=true, batch=512, epochs=300, eval_every=50, seed=1.
-
-| Model | Train MRR | Train Hits@1 | Train Hits@3 | Train Hits@10 | Test MRR | Test Hits@1 | Test Hits@3 | Test Hits@10 |
-|---|---:|---:|---:|---:|---:|---:|---:|---:|
-| [KGE (RotatE)](Experiments/distmult-gnn-kge-300ep-20260928/CoDEx-S/KGE_RotatE/eval_report.json) | 0.6242 | 0.4944 | 0.7136 | 0.8501 | 0.3684 | 0.2429 | 0.4281 | 0.6083 |
-
-
-### WN18RR
-
-Config: dim=64, lr=0.001, batch=128, epochs=300, eval_every=50.
-
-Results pending.
-
-### CoDEx-M
-
-Config: dim=64, lr=0.001, batch=128, epochs=300, eval_every=50.
-
-Results pending.
+| Model | Params | Train MRR | Test MRR (seed 1 / 2) | Test H@1 | Test H@10 |
+|---|---:|---:|---:|---:|---:|
+| RGCN 1L | 552,172 | 0.440 | 0.304 (0.304 / 0.303) | 0.225 | 0.452 |
+| CliffordRGCN 1L, Cl(0,1) | 552,192 | 0.458 | 0.306 (0.305 / 0.308) | 0.230 | 0.453 |
