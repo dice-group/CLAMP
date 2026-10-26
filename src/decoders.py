@@ -5,12 +5,9 @@ def _distmult_triple(h, r, t):
     return (h * r * t).sum(dim=-1)
 
 
-def _distmult_k_vs_all(h, r, entity_repr):
-    return (h * r) @ entity_repr.transpose(0, 1)
+def _distmult_query(h, r):
+    return h * r
 
-
-def _distmult_k_vs_all_head(r, t, entity_repr):
-    return _distmult_k_vs_all(t, r, entity_repr)
 
 
 def _transe_triple(h, r, t, p: float = 1.0):
@@ -21,11 +18,6 @@ def _transe_k_vs_all(h, r, entity_repr, p: float = 1.0):
     diff = (h + r).unsqueeze(1) - entity_repr.unsqueeze(0)
     return -diff.norm(p=p, dim=-1)
 
-
-def _transe_k_vs_all_head(r, t, entity_repr, p: float = 1.0):
-    target = t - r
-    diff = entity_repr.unsqueeze(0) - target.unsqueeze(1)
-    return -diff.norm(p=p, dim=-1)
 
 
 def _complex_split(x):
@@ -42,22 +34,12 @@ def _complex_ex_triple(h, r, t):
     return (a * t_re).sum(dim=-1) + (b * t_im).sum(dim=-1)
 
 
-def _complex_ex_k_vs_all(h, r, entity_repr):
+def _complex_ex_query(h, r):
+    """The complex product h * r as [real | imaginary]; scores are query @ [e_re | e_im]^T."""
     h_re, h_im = _complex_split(h)
     r_re, r_im = _complex_split(r)
-    e_re, e_im = _complex_split(entity_repr)
-    a = h_re * r_re - h_im * r_im
-    b = h_re * r_im + h_im * r_re
-    return a @ e_re.transpose(0, 1) + b @ e_im.transpose(0, 1)
+    return torch.cat([h_re * r_re - h_im * r_im, h_re * r_im + h_im * r_re], dim=-1)
 
-
-def _complex_ex_k_vs_all_head(r, t, entity_repr):
-    r_re, r_im = _complex_split(r)
-    t_re, t_im = _complex_split(t)
-    e_re, e_im = _complex_split(entity_repr)
-    c = r_re * t_re + r_im * t_im
-    d = r_re * t_im - r_im * t_re
-    return c @ e_re.transpose(0, 1) + d @ e_im.transpose(0, 1)
 
 
 def _rotate_phase(r):
@@ -88,23 +70,33 @@ def _rotate_k_vs_all(h, r, entity_repr):
     return -torch.sqrt(diff_re.pow(2).sum(-1) + diff_im.pow(2).sum(-1))
 
 
-def _rotate_k_vs_all_head(r, t, entity_repr):
-    t_re, t_im = _complex_split(t)
-    r_re, r_im = _rotate_phase(r)
-    e_re, e_im = _complex_split(entity_repr)
-    rot_re = t_re * r_re + t_im * r_im
-    rot_im = t_im * r_re - t_re * r_im
-    diff_re = e_re.unsqueeze(0) - rot_re.unsqueeze(1)
-    diff_im = e_im.unsqueeze(0) - rot_im.unsqueeze(1)
-    return -torch.sqrt(diff_re.pow(2).sum(-1) + diff_im.pow(2).sum(-1))
+
+def clifford_decoder(algebra):
+    """Triple score and query for <h * r, t>: the Clifford product of h and r, dotted with t.
+
+    Full multivector product in every channel of ``algebra`` (see src/clifford_algebra.py),
+    then the Euclidean inner product over all coefficients. Cl(0, 0) is DistMult and, in the
+    blade-major layout, Cl(0, 1) is ComplEx.
+    """
+    def query(h, r):
+        return torch.einsum("bd,bdk->bk", h, algebra.left_matrix(r))
+
+    def triple(h, r, t):
+        return (query(h, r) * t).sum(dim=-1)
+
+    return triple, query
 
 
-# Each decoder provides triple, tail-ranking, and head-ranking scores.
+# Each decoder provides triple and tail-ranking scores; head queries use inverse relations.
 DECODERS = {
-    "DistMult": (_distmult_triple, _distmult_k_vs_all, _distmult_k_vs_all_head),
-    "TransE": (_transe_triple, _transe_k_vs_all, _transe_k_vs_all_head),
-    "ComplEx": (_complex_ex_triple, _complex_ex_k_vs_all, _complex_ex_k_vs_all_head),
-    "RotatE": (_rotate_triple, _rotate_k_vs_all, _rotate_k_vs_all_head),
+    "TransE": (_transe_triple, _transe_k_vs_all),
+    "RotatE": (_rotate_triple, _rotate_k_vs_all),
+}
+
+# Bilinear decoders score every tail as query(h, r) @ e: they provide triple scores and the query.
+BILINEAR_DECODERS = {
+    "DistMult": (_distmult_triple, _distmult_query),
+    "ComplEx": (_complex_ex_triple, _complex_ex_query),
 }
 
 COMPLEX_DECODERS = frozenset({"ComplEx", "RotatE"})

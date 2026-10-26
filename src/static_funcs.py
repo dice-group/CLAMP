@@ -1,47 +1,49 @@
 import csv
+import hashlib
 import json
 import os
+import subprocess
+import sys
 from datetime import datetime
 from typing import Optional
 
 import torch
 from torch.utils.data import DataLoader
 
-from src.dataset import KvsAll, OneVsAll, add_reciprocal_triples, collate_fn
-from src.models import MODEL_MAP
+from src.dataset_classes import KvsAll, OnevsAllDataset
+from src.models import model_class
 
 
 def get_model(args, entity_dataset):
-    try:
-        model_cls = MODEL_MAP[args.model]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unknown model '{args.model}'. Available: {sorted(MODEL_MAP)}"
-        ) from exc
-
     model_args = vars(args).copy()
     model_args["num_entities"] = entity_dataset.num_entities
     model_args["num_relations"] = entity_dataset.num_relations
     model_args["train_set_idx"] = entity_dataset.train_set
-    return model_cls(args=model_args)
+    return model_class(model_args)(args=model_args)
 
 
 def get_dataloader(args, entity_dataset) -> DataLoader:
-    triples = entity_dataset.train_set
-    if getattr(args, "reciprocal", False):
-        triples = add_reciprocal_triples(triples, entity_dataset.num_relations)
+    # The train set already holds the reciprocal triples (see load_kg).
     if args.scoring_technique == "1vsAll":
-        train_dataset = OneVsAll(train_set_idx=triples)
+        train_dataset = OnevsAllDataset(
+            train_set_idx=entity_dataset.train_set,
+            entity_idxs=entity_dataset.entity_to_idx,
+        )
     else:
         train_dataset = KvsAll(
-            train_set_idx=triples, num_entities=entity_dataset.num_entities
+            train_set_idx=entity_dataset.train_set,
+            entity_idxs=entity_dataset.entity_to_idx,
+            relation_idxs=entity_dataset.relation_to_idx,
+            form="EntityPrediction",
+            label_smoothing_rate=float(getattr(args, "label_smoothing", 0.0) or 0.0),
         )
+    # Own generator: batch order depends on the seed only, not on RNG use during model construction.
     return DataLoader(
         train_dataset,
         batch_size=args.batch_size,
         shuffle=True,
-        num_workers=args.num_core,
-        collate_fn=collate_fn,
+        num_workers=0,
+        generator=torch.Generator().manual_seed(args.random_seed),
     )
 
 
@@ -53,14 +55,6 @@ _OPTIMIZERS = {
     "Adagrad": torch.optim.Adagrad,
     "ASGD": torch.optim.ASGD,
 }
-
-
-def smooth_labels(
-    y_batch: torch.Tensor, label_smoothing: float, num_entities: int
-) -> torch.Tensor:
-    if not label_smoothing:
-        return y_batch
-    return y_batch * (1.0 - label_smoothing) + label_smoothing / num_entities
 
 
 def get_optimizer(args, params) -> torch.optim.Optimizer:
@@ -77,6 +71,9 @@ def get_optimizer(args, params) -> torch.optim.Optimizer:
     return optim_cls(params, lr=args.lr, weight_decay=args.weight_decay)
 
 
+STORAGE_ROOT = "Experiments"
+
+
 def get_full_storage_path(args) -> str:
     if args.full_storage_path:
         return args.full_storage_path
@@ -85,10 +82,7 @@ def get_full_storage_path(args) -> str:
         if args.dataset_dir
         else "unknown_dataset"
     )
-    if getattr(args, "test_runs", False):
-        exp_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S-%f")[:-3]
-        return f"{args.storage_path}/Test_runs/{exp_time}"
-    return f"{args.storage_path}/{dataset_name}/{args.model}_{args.embedding_dim}"
+    return f"{STORAGE_ROOT}/{dataset_name}/{args.model}_{args.embedding_dim}"
 
 
 def prepare_experiment_dir(path: str) -> None:
@@ -138,3 +132,65 @@ def save_model_artifacts(args, model, entity_dataset) -> None:
         entity_dataset.relation_to_idx,
         "relation",
     )
+
+
+def _git(*cmd) -> str:
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    try:
+        return subprocess.run(["git", *cmd], cwd=root, capture_output=True, text=True).stdout
+    except OSError:
+        return ""
+
+
+def save_run_metadata(args, model, entity_dataset) -> None:
+    """Code revision, environment and initial-state checksums, written before training."""
+    import torch_geometric
+
+    def digest(data: bytes) -> str:
+        return hashlib.sha256(data).hexdigest()[:16]
+
+    params = b"".join(p.detach().cpu().numpy().tobytes() for p in model.state_dict().values())
+    vocab = json.dumps([sorted(entity_dataset.entity_to_idx.items()),
+                        sorted(entity_dataset.relation_to_idx.items())]).encode()
+    meta = {
+        "git_revision": _git("rev-parse", "HEAD").strip(),
+        "git_diff_sha256": digest(_git("diff", "HEAD").encode()),
+        "python": sys.version.split()[0],
+        "torch": torch.__version__,
+        "torch_geometric": torch_geometric.__version__,
+        "cuda_device": torch.cuda.get_device_name() if args.accelerator == "gpu" else None,
+        "initial_state_sha256": digest(params),
+        "vocab_sha256": digest(vocab),
+        "data_order_seed": args.random_seed,
+    }
+    with open(os.path.join(args.full_storage_path, "run_meta.json"), "w") as f:
+        json.dump(meta, f, indent=4)
+
+
+def _read_idx_csv(path: str) -> dict:
+    with open(path, newline="") as f:
+        rows = list(csv.reader(f))[1:]
+    return {name: int(idx) for idx, name in rows}
+
+
+def load_initial_state(path: str, model, entity_dataset) -> None:
+    """Copy entity and relation tables (and any other matching tensors) from a saved model.pt.
+
+    The checkpoint's vocabulary files must match this dataset's indices. Parameters absent from the
+    checkpoint, such as encoder layers and gates, keep their fresh initialization.
+    """
+    folder = os.path.dirname(os.path.abspath(path))
+    for name, vocab in (("entity_to_idx.csv", entity_dataset.entity_to_idx),
+                        ("relation_to_idx.csv", entity_dataset.relation_to_idx)):
+        saved = os.path.join(folder, name)
+        if not os.path.exists(saved):
+            raise FileNotFoundError(f"--init_from needs {saved} to check the vocabulary")
+        if _read_idx_csv(saved) != dict(vocab):
+            raise ValueError(f"{saved} does not match this dataset's vocabulary")
+    state = torch.load(path, map_location="cpu")
+    # The propagation graph comes from the dataset, not the checkpoint.
+    state.pop("gnn_train_triples", None)
+    missing, unexpected = model.load_state_dict(state, strict=False)
+    if unexpected or {"node_emb.weight", "rel_emb.weight"} & set(missing):
+        raise ValueError(f"Incompatible checkpoint: missing {missing}, unexpected {unexpected}")
+    print(f"[init] loaded {path}; kept fresh: {missing}")

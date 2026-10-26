@@ -1,9 +1,11 @@
 from .kge import KGE, LTE
-from .compgcn import CompGCN
 from .rgcn import RGCN
-from .rgat import GATv2
+from .gatv2 import GATv2
 from .graphsage import GraphSAGE
-from .clifford import CliffordGATv2, CliffordGraphSAGE, CliffordRGCN
+from .compgcn import CompGCN
+from .clifford_rgcn import CliffordRGCN
+from .clifford_gatv2 import CliffordGATv2
+from .clifford_graphsage import CliffordGraphSAGE
 
 MODEL_MAP = {
     "KGE": KGE,
@@ -16,3 +18,15 @@ MODEL_MAP = {
     "CliffordGATv2": CliffordGATv2,
     "CliffordGraphSAGE": CliffordGraphSAGE,
 }
+
+
+def model_class(args: dict):
+    """The class for args['model']."""
+    name = args["model"]
+    if name not in MODEL_MAP:
+        raise ValueError(f"Unknown model '{name}'. Available: {sorted(MODEL_MAP)}")
+    return MODEL_MAP[name]
+
+
+def build_model(args: dict):
+    return model_class(args)(args=args)

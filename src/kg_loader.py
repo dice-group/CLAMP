@@ -39,7 +39,21 @@ def _read_triples(path: str):
     return triples
 
 
+def create_reciprocal_triples(triples: np.ndarray, num_relations: int) -> np.ndarray:
+    """(h, r, t) union (t, r + num_relations, h), as dicee's create_recipriocal_triples."""
+    triples = np.asarray(triples).reshape(-1, 3)
+    inverse = np.stack(
+        [triples[:, 2], triples[:, 1] + num_relations, triples[:, 0]], axis=1
+    )
+    return np.concatenate([triples, inverse], axis=0)
+
+
 def load_kg(dataset_dir: str, vocab_from_all_splits: bool = False) -> KG:
+    """Read a KG; train/valid/test all carry reciprocal triples, as in dicee.
+
+    Relation ``r`` keeps its index and its inverse ``r_inverse`` is ``r + R``, so
+    ``num_relations`` is ``2R``. Head prediction is then a tail query on ``r_inverse``.
+    """
     train = _read_triples(os.path.join(dataset_dir, "train.txt"))
     valid = _read_triples(os.path.join(dataset_dir, "valid.txt"))
     test = _read_triples(os.path.join(dataset_dir, "test.txt"))
@@ -50,7 +64,11 @@ def load_kg(dataset_dir: str, vocab_from_all_splits: bool = False) -> KG:
     entities = sorted({h for h, _, _ in vocab_source} | {t for _, _, t in vocab_source})
     relations = sorted({r for _, r, _ in vocab_source})
     entity_to_idx = {e: i for i, e in enumerate(entities)}
+    if any(f"{r}_inverse" in relations for r in relations):
+        raise ValueError("A relation named '<r>_inverse' clashes with the generated inverse relations")
+    num_direct = len(relations)
     relation_to_idx = {r: i for i, r in enumerate(relations)}
+    relation_to_idx.update({f"{r}_inverse": i + num_direct for r, i in relation_to_idx.items()})
 
     def index(triples):
         rows = [
@@ -58,7 +76,7 @@ def load_kg(dataset_dir: str, vocab_from_all_splits: bool = False) -> KG:
             for h, r, t in triples
             if h in entity_to_idx and r in relation_to_idx and t in entity_to_idx
         ]
-        return np.asarray(rows, dtype=np.int64).reshape(-1, 3)
+        return create_reciprocal_triples(np.asarray(rows, dtype=np.int64), num_direct)
 
     return KG(
         train_set=index(train),

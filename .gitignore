@@ -16,3 +16,4 @@ tests/
 checkpoints/
 docs/
 extention/
+src/diagnostics.py

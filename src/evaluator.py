@@ -9,10 +9,14 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, TensorDataset
 
+from src.filtering import FilteredRanker, evaluation_tie_options
+from src.models.base import KGModel
+
 
 class Evaluator:
     def __init__(self, args):
         self.args = args
+        FilteredRanker(**evaluation_tie_options(args))  # rejects an unknown tie policy now
         self.report: Dict[str, Dict[str, float]] = {}
 
     def eval(
@@ -23,8 +27,10 @@ class Evaluator:
             return None
 
         er_vocab = self._build_er_vocab(dataset, include_test=not during_training)
-        re_vocab = self._build_re_vocab(dataset, include_test=not during_training)
-        batch_size = int(getattr(self.args, "batch_size", 1024))
+        batch_size = int(
+            getattr(self.args, "eval_batch_size", None)
+            or getattr(self.args, "batch_size", 1024)
+        )
 
         raw_report = {}
         split_times = {}
@@ -40,7 +46,7 @@ class Evaluator:
                 continue
             t0 = time.perf_counter()
             raw_report[split_name] = self._evaluate_split(
-                trained_model, loader, er_vocab, re_vocab
+                trained_model, loader, er_vocab
             )
             split_times[split_name] = time.perf_counter() - t0
 
@@ -54,7 +60,7 @@ class Evaluator:
             )
 
         self.report = raw_report
-        if not during_training and getattr(self.args, "save_experiment", True):
+        if not during_training:
             full_storage_path = getattr(self.args, "full_storage_path", None)
             if full_storage_path:
                 os.makedirs(full_storage_path, exist_ok=True)
@@ -70,103 +76,37 @@ class Evaluator:
         model,
         data_loader,
         er_vocab: Dict[Tuple[int, int], List[int]],
-        re_vocab: Dict[Tuple[int, int], List[int]],
     ) -> Dict[str, float]:
+        """Filtered tail ranking; the split holds reciprocal triples, so it covers heads too."""
         model.eval()
         device = next(model.parameters()).device
-        rank_sum = 0.0
-        reciprocal_rank_sum = 0.0
-        hits1 = hits3 = hits10 = 0
-        num_rankings = 0
-        tie_policy = getattr(self.args, "eval_tie_policy", "average")
-
+        score_kwargs = {}
+        if type(model).forward_k_vs_all is KGModel.forward_k_vs_all:
+            # Weights and graph stay fixed for the whole evaluation split.
+            score_kwargs["entity_repr"] = model.encode(*model.graph)
+        ranker = FilteredRanker(**evaluation_tie_options(self.args))
+        ranks: List[int] = []
         for e1_idx, r_idx, e2_idx in data_loader:
-            e1_idx, r_idx, e2_idx = (
-                e1_idx.to(device),
-                r_idx.to(device),
-                e2_idx.to(device),
+            predictions = model.forward_k_vs_all(
+                torch.stack((e1_idx, r_idx), dim=1).to(device), **score_kwargs
             )
+            if not torch.isfinite(predictions).all():
+                raise ValueError("Non-finite predictions cannot be ranked")
+            filter_indices = [
+                er_vocab.get(key, []) for key in zip(e1_idx.tolist(), r_idx.tolist())
+            ]
+            ranks.extend(ranker.rank_batch(predictions, e2_idx.to(device), filter_indices))
 
-            tail_predictions = model.forward_k_vs_all(
-                torch.stack((e1_idx, r_idx), dim=1)
-            )
-            tail_ranks = self._rank_batch(
-                tail_predictions,
-                e2_idx,
-                keys=list(zip(e1_idx.tolist(), r_idx.tolist())),
-                vocab=er_vocab,
-                tie_policy=tie_policy,
-            )
-
-            head_predictions = model.forward_k_vs_all_head(
-                torch.stack((r_idx, e2_idx), dim=1)
-            )
-            head_ranks = self._rank_batch(
-                head_predictions,
-                e1_idx,
-                keys=list(zip(r_idx.tolist(), e2_idx.tolist())),
-                vocab=re_vocab,
-                tie_policy=tie_policy,
-            )
-
-            for ranks in (tail_ranks, head_ranks):
-                num_rankings += ranks.numel()
-                rank_sum += ranks.sum().item()
-                reciprocal_rank_sum += torch.reciprocal(ranks).sum().item()
-                hits1 += (ranks <= 1).sum().item()
-                hits3 += (ranks <= 3).sum().item()
-                hits10 += (ranks <= 10).sum().item()
-
-        if num_rankings == 0:
+        if not ranks:
             return {"MRR": 0.0, "MR": 0.0, "H@1": 0.0, "H@3": 0.0, "H@10": 0.0}
+        ranks = torch.tensor(ranks, dtype=torch.float64)
         return {
-            "MRR": reciprocal_rank_sum / num_rankings,
-            "MR": rank_sum / num_rankings,
-            "H@1": hits1 / num_rankings,
-            "H@3": hits3 / num_rankings,
-            "H@10": hits10 / num_rankings,
+            "MRR": torch.reciprocal(ranks).mean().item(),
+            "MR": ranks.mean().item(),
+            "H@1": (ranks <= 1).double().mean().item(),
+            "H@3": (ranks <= 3).double().mean().item(),
+            "H@10": (ranks <= 10).double().mean().item(),
         }
-
-    @staticmethod
-    def _rank_batch(
-        predictions: torch.Tensor,
-        target_idx: torch.Tensor,
-        keys: List[Tuple[int, int]],
-        vocab: Dict[Tuple[int, int], List[int]],
-        tie_policy: str = "average",
-    ) -> torch.Tensor:
-        if not torch.isfinite(predictions).all():
-            raise ValueError("Non-finite predictions cannot be ranked")
-
-        batch_size = predictions.size(0)
-        target_scores = predictions.gather(1, target_idx.view(-1, 1)).squeeze(1)
-
-        row_ids, col_ids = [], []
-        for j in range(batch_size):
-            target = int(target_idx[j].item())
-            for other in vocab.get(keys[j], []):
-                if other != target:
-                    row_ids.append(j)
-                    col_ids.append(other)
-        if row_ids:
-            rows = torch.as_tensor(row_ids, dtype=torch.long, device=predictions.device)
-            cols = torch.as_tensor(col_ids, dtype=torch.long, device=predictions.device)
-            predictions[rows, cols] = float("-inf")
-        predictions.scatter_(1, target_idx.view(-1, 1), target_scores.view(-1, 1))
-
-        if tie_policy == "sort":
-            order = torch.sort(predictions, dim=1, descending=True).indices
-            positions = (order == target_idx.view(-1, 1)).nonzero()[:, 1]
-            return positions.to(torch.float32) + 1.0
-
-        strictly_greater = (predictions > target_scores.unsqueeze(1)).sum(dim=1)
-        # Exclude the target itself from the tie count.
-        tied_with_target = (predictions == target_scores.unsqueeze(1)).sum(dim=1) - 1
-        return (
-            strictly_greater.to(torch.float32)
-            + 1.0
-            + 0.5 * tied_with_target.to(torch.float32)
-        )
 
     def _resolve_eval_mode(self) -> Optional[str]:
         eval_model = getattr(self.args, "eval_model", "train_val_test")
@@ -200,20 +140,4 @@ class Evaluator:
                 continue
             for h, r, t in np.asarray(triples)[:, :3]:
                 vocab.setdefault((int(h), int(r)), set()).add(int(t))
-        return {k: sorted(v) for k, v in vocab.items()}
-
-    @staticmethod
-    def _build_re_vocab(
-        dataset, include_test: bool = True
-    ) -> Dict[Tuple[int, int], List[int]]:
-        vocab: Dict[Tuple[int, int], set] = {}
-        splits = ["train_set", "valid_set"]
-        if include_test:
-            splits.append("test_set")
-        for attr in splits:
-            triples = getattr(dataset, attr, None)
-            if triples is None or len(triples) == 0:
-                continue
-            for h, r, t in np.asarray(triples)[:, :3]:
-                vocab.setdefault((int(r), int(t)), set()).add(int(h))
         return {k: sorted(v) for k, v in vocab.items()}

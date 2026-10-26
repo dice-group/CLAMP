@@ -43,7 +43,7 @@ a dataset with `R` relations propagates over `2R` relation types.
 edge in the propagation graph, so the encoder could read the answer off the
 graph instead of generalising. Every training step removes the mini-batch's own
 query edges, both directions, from the propagation graph
-(`src/models/base_gnn.py::_graph_excluding_batch`), following R-GCN
+(`src/models/gnn.py::_graph_excluding_batch`), following R-GCN
 (Schlichtkrull et al. 2018, §4.2). Inactive at evaluation, where the query
 edges were never in the graph.
 
@@ -111,7 +111,7 @@ configuration** — the same decoder, dimension, learning rate, weight decay,
 dropout, and 500-epoch budget — so the encoder is the only thing that changes.
 `--num_bases` has no Clifford analogue (the relation operator is a multivector,
 not a matrix) and was dropped for `CliffordRGCN`. See
-[`clifford-models.md`](clifford-models.md) for the models themselves.
+[`clifford-models.md`](clifford/clifford-models.md) for the models themselves.
 
 ```bash
 python main.py --model CliffordRGCN --decoder ComplEx --dataset_dir KGs/CoDEx-S \
@@ -212,8 +212,7 @@ improving slightly.
 
 ### d = 32: which literature idea helps a GNN encoder?
 
-Phase 1 (`bash scripts/run_codexs_dim32_literature.sh`, results in
-`Experiments/CoDEx-S-dim32-literature/`) ran 13 configurations at lr 3.4e-4 and
+Phase 1 (results in `Experiments/CoDEx-S-dim32-literature/`) ran 13 configurations at lr 3.4e-4 and
 1e-3, one seed. It added two models and three graph controls:
 
 - `LTE`: shared bias-free linear map, BatchNorm and dropout on entity

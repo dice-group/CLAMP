@@ -1,40 +1,24 @@
-from typing import Optional, Tuple
-
 import torch
 
-from src.models.base_gnn import RelationalGNNEncoder
+from src.models.base import KGModel
 
 
-class KGE(RelationalGNNEncoder):
+class KGE(KGModel):
+    """Decoder-only baseline: entity representations are the embedding table."""
     name = "KGE"
 
-    def _build_layers(self) -> torch.nn.ModuleList:
-        return torch.nn.ModuleList()
 
-    @property
-    def graph(self) -> Tuple[Optional[torch.LongTensor], Optional[torch.LongTensor]]:
-        return None, None
-
-    def _graph_excluding_batch(
-        self,
-        idx_h: torch.LongTensor,
-        idx_r: torch.LongTensor,
-        idx_t: Optional[torch.LongTensor] = None,
-    ) -> Tuple[None, None]:
-        return None, None
-
-
-class LTE(KGE):
+class LTE(KGModel):
+    """LTE (Zhang et al., 2022): one graph-free linear transform with BatchNorm and dropout."""
     name = "LTE"
 
     def __init__(self, args: dict):
         super().__init__(args)
-        self.lte_bn = torch.nn.BatchNorm1d(self.embedding_dim)
-
-    def _build_layers(self) -> torch.nn.ModuleList:
-        return torch.nn.ModuleList(
+        self.gnn_dropout = torch.nn.Dropout(float(args.get("gnn_dropout_rate", 0.2)))
+        self.gnn_layers = torch.nn.ModuleList(
             [torch.nn.Linear(self.embedding_dim, self.embedding_dim, bias=False)]
         )
+        self.lte_bn = torch.nn.BatchNorm1d(self.embedding_dim)
 
-    def _apply_layer(self, layer_idx, layer, x, edge_index, edge_type):
-        return self.gnn_dropout(self.lte_bn(layer(x)))
+    def encode(self, edge_index=None, edge_type=None) -> torch.FloatTensor:
+        return self.gnn_dropout(self.lte_bn(self.gnn_layers[0](self.node_emb.weight)))

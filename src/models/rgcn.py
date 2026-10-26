@@ -18,40 +18,57 @@ stores a relation identifier
 # Copyright (c) 2023 PyG Team. MIT license: PYG_LICENSE.
 
 import torch
-import torch.nn.functional as F
 from torch_geometric.nn import RGCNConv
 
-from src.models.base_gnn import RelationalGNNEncoder
+from src.models.clifford_layers import SPLIT_ACTIVATIONS, residual_mode
+from src.models.gnn import RelationalGNN
 
 
-class RGCN(RelationalGNNEncoder):
+class RGCN(RelationalGNN):
+    """Stacked RGCNConv layers with ``--gnn_activation`` and dropout between layers.
+
+    ``--gnn_residual`` adds each layer's input to its output, either inside the activation
+    (``post``) or around it (``pre``).
+    """
+    name = "RGCN"
+
     def __init__(self, args: dict):
         super().__init__(args)
-        self.name = "RGCN"
-
-    def _build_layers(self) -> torch.nn.ModuleList:
-        num_bases = self.args.get("num_bases", None)
-        return torch.nn.ModuleList(
+        self.activation = args.get("gnn_activation", "relu")
+        self.gnn_residual = residual_mode(args)
+        self.gnn_layers = torch.nn.ModuleList(
             [
                 RGCNConv(
                     in_channels=self.embedding_dim,
                     out_channels=self.embedding_dim,
-                    num_relations=self.num_relations_gnn,
-                    num_bases=num_bases,
+                    num_relations=self.num_relations,
+                    num_bases=args.get("num_bases", None),
                 )
                 for _ in range(self.num_gnn_layers)
             ]
         )
 
-    def _apply_layer(
-        self,
-        i: int,
-        conv: torch.nn.Module,
-        x: torch.FloatTensor,
-        edge_index: torch.LongTensor,
-        edge_type: torch.LongTensor,
-    ) -> torch.FloatTensor:
-        x = conv(x, edge_index, edge_type)
-        if i < self.num_gnn_layers - 1:
-            x = F.relu(x)
+    def layer(self, i, x, edge_index, edge_type) -> torch.FloatTensor:
+        """Layer i with its residual path and the hidden activation.
+
+        ``post`` computes f(F(x) + x), so the activation also clips the identity term.
+        ``pre`` computes x + f(F(x)), leaving the identity path unclipped.
+        """
+        out = self.gnn_layers[i](x, edge_index, edge_type)
+        activation = SPLIT_ACTIVATIONS[self.activation]
+        hidden = i < self.num_gnn_layers - 1
+        if self.gnn_residual == "post":
+            out = out + x
+        if hidden and activation is not None:
+            out = activation(out)
+        if self.gnn_residual == "pre":
+            out = out + x
+        return out
+
+    def encode(self, edge_index, edge_type) -> torch.FloatTensor:
+        x = self.node_emb.weight
+        for i in range(self.num_gnn_layers):
+            x = self.layer(i, x, edge_index, edge_type)
+            if i < self.num_gnn_layers - 1:
+                x = self.gnn_dropout(x)
         return x

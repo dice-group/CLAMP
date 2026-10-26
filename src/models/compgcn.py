@@ -1,4 +1,5 @@
-"""Local CompGCN implementation with multiplication or subtraction composition.
+"""Local CompGCN implementation with multiplication, subtraction, complex
+multiplication (ComplEx) or rotation (RotatE) composition.
 
 Vashishth et al., Composition-based Multi-Relational Graph Convolutional
 Networks, ICLR 2020. https://arxiv.org/abs/1911.03082
@@ -7,11 +8,25 @@ Degree normalization here uses the whole graph rather than each direction.
 
 import torch
 
-from src.models.base_gnn import RelationalGNNEncoder
+from src.decoders import _complex_split, _rotate_phase
+from src.models.gnn import RelationalGNN
+
+
+def _complex_mult(x: torch.Tensor, r_re: torch.Tensor, r_im: torch.Tensor) -> torch.Tensor:
+    x_re, x_im = _complex_split(x)
+    return torch.cat([x_re * r_re - x_im * r_im, x_re * r_im + x_im * r_re], dim=-1)
 
 
 def _compose(x: torch.Tensor, r: torch.Tensor, opn: str) -> torch.Tensor:
-    return x * r if opn == "mult" else x - r
+    if opn == "mult":
+        return x * r
+    if opn == "sub":
+        return x - r
+    if opn == "cmult":
+        return _complex_mult(x, *_complex_split(r))
+    if opn == "rotate":
+        return _complex_mult(x, *_rotate_phase(r))
+    raise ValueError(f"Unknown compgcn_opn '{opn}'")
 
 
 class CompGCNLayer(torch.nn.Module):
@@ -44,34 +59,39 @@ class CompGCNLayer(torch.nn.Module):
         return torch.tanh(self.bn(out))
 
 
-class CompGCN(RelationalGNNEncoder):
-    def __init__(self, args: dict):
-        if not args.get("reciprocal", False):
-            raise ValueError(
-                "CompGCN requires --reciprocal for its edge-type relation table"
-            )
-        super().__init__(args)
-        self.name = "CompGCN"
+class CompGCN(RelationalGNN):
+    """Stacked CompGCN layers; relation states are updated by each layer's w_rel."""
+    name = "CompGCN"
 
-    def _build_layers(self) -> torch.nn.ModuleList:
-        opn = self.args.get("compgcn_opn", "mult")
-        return torch.nn.ModuleList(
+    def __init__(self, args: dict):
+        super().__init__(args)
+        opn = args.get("compgcn_opn", "mult")
+        if opn in ("cmult", "rotate") and self.embedding_dim % 2:
+            raise ValueError(f"compgcn_opn '{opn}' requires an even embedding_dim")
+        self.gnn_layers = torch.nn.ModuleList(
             [
                 CompGCNLayer(
-                    self.embedding_dim, self.num_relations, opn, self.gnn_dropout_rate
+                    self.embedding_dim, self.num_direct_relations, opn,
+                    self.gnn_dropout_rate,
                 )
                 for _ in range(self.num_gnn_layers)
             ]
         )
 
-    def _relation_states(self, num_layers: int) -> torch.FloatTensor:
+    def relation_states(self, num_layers: int) -> torch.FloatTensor:
+        """Relation embeddings after the w_rel of the first num_layers layers."""
         rel = self.rel_emb.weight
         for layer in self.gnn_layers[:num_layers]:
             rel = layer.w_rel(rel)
         return rel
 
-    def _apply_layer(self, layer_idx, layer, x, edge_index, edge_type):
-        return layer(x, edge_index, edge_type, self._relation_states(layer_idx))
+    def encode(self, edge_index, edge_type) -> torch.FloatTensor:
+        x = self.node_emb.weight
+        for i, layer in enumerate(self.gnn_layers):
+            x = layer(x, edge_index, edge_type, self.relation_states(i))
+            if i < self.num_gnn_layers - 1:
+                x = self.gnn_dropout(x)
+        return x
 
     def relation_repr(self) -> torch.FloatTensor:
-        return self._relation_states(len(self.gnn_layers))
+        return self.relation_states(self.num_gnn_layers)

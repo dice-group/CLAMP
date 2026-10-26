@@ -50,30 +50,30 @@ import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv
 
-from src.models.base_gnn import RelationalGNNEncoder
+from src.models.gnn import RelationalGNN
 
 
-class GATv2(RelationalGNNEncoder):
+class GATv2(RelationalGNN):
+    """Stacked GATv2Conv layers; relations enter attention as edge features.
+
+    Hidden layers concatenate ``gnn_heads`` heads of width embedding_dim / heads; the last layer
+    averages full-width heads. ELU and dropout between layers.
+    """
+    name = "GATv2"
+
     def __init__(self, args: dict):
         super().__init__(args)
-        self.name = "GATv2"
-        self.gnn_relation_embeddings = torch.nn.Embedding(
-            self.num_relations_gnn, self.embedding_dim
-        )
-        self.param_init(self.gnn_relation_embeddings.weight.data)
-
-    def _build_layers(self) -> torch.nn.ModuleList:
-        heads = int(self.args.get("gnn_heads", 4))
+        heads = int(args.get("gnn_heads", 4))
         assert self.embedding_dim % heads == 0, (
             f"embedding_dim ({self.embedding_dim}) must be divisible by "
             f"gnn_heads ({heads}) "
             "so concatenated per-head outputs stay at embedding_dim."
         )
         per_head_dim = self.embedding_dim // heads
-        layers = torch.nn.ModuleList()
+        self.gnn_layers = torch.nn.ModuleList()
         for i in range(self.num_gnn_layers):
             is_last_layer = i == self.num_gnn_layers - 1
-            layers.append(
+            self.gnn_layers.append(
                 GATv2Conv(
                     in_channels=self.embedding_dim,
                     out_channels=self.embedding_dim if is_last_layer else per_head_dim,
@@ -83,18 +83,15 @@ class GATv2(RelationalGNNEncoder):
                     dropout=self.gnn_dropout_rate,
                 )
             )
-        return layers
+        self.gnn_relation_embeddings = torch.nn.Embedding(
+            self.num_relations, self.embedding_dim
+        )
+        self.param_init(self.gnn_relation_embeddings.weight.data)
 
-    def _apply_layer(
-        self,
-        i: int,
-        conv: torch.nn.Module,
-        x: torch.FloatTensor,
-        edge_index: torch.LongTensor,
-        edge_type: torch.LongTensor,
-    ) -> torch.FloatTensor:
-        edge_attr = self.gnn_relation_embeddings(edge_type)
-        x = conv(x, edge_index, edge_attr=edge_attr)
-        if i < self.num_gnn_layers - 1:
-            x = F.elu(x)
+    def encode(self, edge_index, edge_type) -> torch.FloatTensor:
+        x = self.node_emb.weight
+        for i, conv in enumerate(self.gnn_layers):
+            x = conv(x, edge_index, edge_attr=self.gnn_relation_embeddings(edge_type))
+            if i < self.num_gnn_layers - 1:
+                x = self.gnn_dropout(F.elu(x))
         return x

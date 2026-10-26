@@ -8,9 +8,10 @@ deeper on two things that outgrew it.
 | File | Contents |
 |---|---|
 | [`experiments.md`](experiments.md) | Every experiment run in this repo: datasets, training and evaluation protocol, hyperparameters, results, and what each run does and does not establish. |
-| [`clifford-models.md`](clifford-models.md) | The Clifford-algebra encoders: the algebra, how each layer maps onto the layer it replaces, the constraints that follow, and how the implementation is verified. |
-| [`literature-baselines.md`](literature-baselines.md) | Published state-of-the-art per benchmark dataset (FB15k-237, WN18RR, UMLS, CoDEx-S/M, NELL-995), pulled from papers/leaderboards, with paper-vs-implementation caveats (missing code, incompatible eval protocols, split-versioning traps) checked rather than assumed. |
-| [`literature-sweep.md`](literature-sweep.md) | September 2026 sweep of ~120 papers: results at low dimension (d ≤ 64), whether GNN-encoder papers compare against the same decoder under matched conditions, every CoDEx/UMLS/Kinship result found, numbers not to rely on, and open gaps. |
+| [`rgcn-gap/`](rgcn-gap/README.md) | Track: why RGCN lags the decoder-only baseline. Status, working plan, capacity analysis. |
+| [`clifford/`](clifford/README.md) | Track: Clifford message passing. Status, model docs, attention derivation, GA survey notes. |
+| [`analysis_todos.md`](analysis_todos.md) | Why no encoder beats the decoder-only KGE: three proposed explanations checked against the controls, and the analyses that would test them. |
+| [`related-work.md`](related-work.md) | The literature in one place: relational GNN encoders, matched re-evaluations, decoder-expressivity and GNN-expressiveness theory, path-based and inductive GNNs, degree effects, hypercomplex and Clifford models; then the September 2026 sweep of ~120 papers (results at d <= 64, every CoDEx/UMLS/Kinship number found, numbers not to rely on) and published state of the art per benchmark. |
 | [`literature-results.csv`](literature-results.csv) | The sweep's results as one table (dataset, model, family, dimension, MRR/H@1/H@10, protocol, source, verification, caution flag) for filtering or plotting against this project's runs. |
 
 Where the two overlap with the top-level README, the README is the summary and
