@@ -44,13 +44,13 @@ the attention coefficients :math:`\alpha_{i,j}` are computed as
     \right)\right)}.
 """
 # PyG source: torch_geometric/nn/conv/gatv2_conv.py
-# Copyright (c) 2023 PyG Team. MIT license: PYG_LICENSE.
+# Copyright (c) 2023 PyG Team. MIT license: src/models/PYG_LICENSE.
 
 import torch
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv
 
-from src.models.gnn import RelationalGNN
+from src.models.gnn.base import RelationalGNN
 
 
 class GATv2(RelationalGNN):

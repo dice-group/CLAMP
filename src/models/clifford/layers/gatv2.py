@@ -10,9 +10,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch_geometric.utils import softmax
 
-from src.clifford_algebra import CliffordAlgebra
-from src.models.clifford_layers import CliffordLinear, relational_transform
-from src.models.gnn import RelationalGNN
+from src.models.clifford.layers.relational import CliffordLinear, relational_transform
 
 
 class CliffordGATv2Conv(nn.Module):
@@ -66,40 +64,3 @@ class CliffordGATv2Conv(nn.Module):
         alpha = F.dropout(alpha, p=self.dropout, training=self.training)
         messages = (value * alpha.unsqueeze(-1)).mean(dim=1)
         return x.new_zeros(x.shape).index_add_(0, dst, messages) + self.root(x)
-
-
-class CliffordGATv2(RelationalGNN):
-    """Stacked full-width Clifford attention layers with ELU and dropout between layers.
-
-    ``--gnn_activation none`` removes the ELU.
-    """
-    name = "CliffordGATv2"
-
-    def __init__(self, args: dict):
-        super().__init__(args)
-        self.activation = args.get("gnn_activation", "relu")
-        self.clifford_algebra = CliffordAlgebra.for_embedding_dim(
-            self.embedding_dim, args.get("clifford_signature")
-        )
-        heads = int(args.get("gnn_heads", 4))
-        self.gnn_layers = nn.ModuleList(
-            [
-                CliffordGATv2Conv(
-                    self.clifford_algebra,
-                    self.num_relations,
-                    heads=heads,
-                    dropout=self.gnn_dropout_rate,
-                )
-                for _ in range(self.num_gnn_layers)
-            ]
-        )
-
-    def encode(self, edge_index, edge_type) -> torch.FloatTensor:
-        x = self.node_emb.weight
-        for i, conv in enumerate(self.gnn_layers):
-            x = conv(x, edge_index, edge_type)
-            if i < self.num_gnn_layers - 1:
-                if self.activation == "relu":
-                    x = F.elu(x)
-                x = self.gnn_dropout(x)
-        return x

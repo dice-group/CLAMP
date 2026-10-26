@@ -1,7 +1,7 @@
 import argparse
 
 from src.filtering import TIE_POLICIES
-from src.models.clifford_layers import RESIDUAL_MODES
+from src.models.gnn.base import RESIDUAL_MODES
 
 
 def get_default_arguments(args_list=None) -> argparse.Namespace:

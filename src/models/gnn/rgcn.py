@@ -15,13 +15,13 @@ stores a relation identifier
 :math:`\in \{ 0, \ldots, |\mathcal{R}| - 1\}` for each edge.
 """
 # PyG source: torch_geometric/nn/conv/rgcn_conv.py
-# Copyright (c) 2023 PyG Team. MIT license: PYG_LICENSE.
+# Copyright (c) 2023 PyG Team. MIT license: src/models/PYG_LICENSE.
 
 import torch
 from torch_geometric.nn import RGCNConv
 
-from src.models.clifford_layers import SPLIT_ACTIVATIONS, residual_mode
-from src.models.gnn import RelationalGNN
+from src.models.gnn.base import RelationalGNN, residual_mode
+from src.models.gnn.layers.activations import SPLIT_ACTIVATIONS
 
 
 class RGCN(RelationalGNN):

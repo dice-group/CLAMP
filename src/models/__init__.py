@@ -1,11 +1,6 @@
 from .kge import KGE, LTE
-from .rgcn import RGCN
-from .gatv2 import GATv2
-from .graphsage import GraphSAGE
-from .compgcn import CompGCN
-from .clifford_rgcn import CliffordRGCN
-from .clifford_gatv2 import CliffordGATv2
-from .clifford_graphsage import CliffordGraphSAGE
+from .gnn import RGCN, GATv2, GraphSAGE, CompGCN
+from .clifford import CliffordRGCN, CliffordGATv2, CliffordGraphSAGE
 
 MODEL_MAP = {
     "KGE": KGE,

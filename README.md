@@ -24,17 +24,25 @@ python main.py --model CompGCN --decoder ComplEx \
 
 ## Models
 
-Each model is one class in its own file under `src/models/` that builds its layers and writes
-its own `encode` loop.
+Each model is one class in its own file that builds its layers and writes its own `encode` loop.
+Layers live in a `layers/` package next to the models that use them.
 
-| File | Contents |
-|---|---|
-| `base.py` | `KGModel`: entity/relation tables, decoder, dicee-matched scoring. No graph. |
-| `gnn.py` | `RelationalGNN(KGModel)`: training graph, `--gnn_graph` controls, query-edge exclusion |
-| `kge.py` | `KGE` (decoder only), `LTE` |
-| `rgcn.py`, `gatv2.py`, `graphsage.py`, `compgcn.py` | Dense encoders |
-| `clifford_rgcn.py`, `clifford_gatv2.py`, `clifford_graphsage.py` | Clifford encoders, each with its layer; shared pieces in `clifford_layers.py` |
-| `gated_rgcn.py` | `GatedRGCN`, the RGCN-track control selected by `--gnn_gate` |
+```
+src/models/
+├── base.py              KGModel: entity/relation tables, decoder, dicee-matched scoring; no graph
+├── kge.py               KGE (decoder only), LTE
+├── gnn/                 dense encoders
+│   ├── base.py          RelationalGNN(KGModel): training graph, --gnn_graph controls, query-edge
+│   │                    exclusion; --gnn_residual
+│   ├── rgcn.py  gatv2.py  graphsage.py  compgcn.py
+│   └── layers/          RelationalSAGELayer, CompGCNLayer, coefficient-wise activations
+│                        (RGCN and GATv2 use PyG's RGCNConv and GATv2Conv)
+└── clifford/            Clifford encoders: one multivector per relation in place of a matrix
+    ├── rgcn.py  gatv2.py  graphsage.py
+    └── layers/          relational.py (CliffordLinear, relational_transform, relational_aggregate),
+                         activations.py (split activations, multivector gates),
+                         rgcn.py  gatv2.py  graphsage.py (one layer per encoder)
+```
 
 ## Results
 

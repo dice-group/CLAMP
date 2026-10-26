@@ -43,7 +43,7 @@ a dataset with `R` relations propagates over `2R` relation types.
 edge in the propagation graph, so the encoder could read the answer off the
 graph instead of generalising. Every training step removes the mini-batch's own
 query edges, both directions, from the propagation graph
-(`src/models/gnn.py::_graph_excluding_batch`), following R-GCN
+(`src/models/gnn/base.py::_graph_excluding_batch`), following R-GCN
 (Schlichtkrull et al. 2018, §4.2). Inactive at evaluation, where the query
 edges were never in the graph.
 

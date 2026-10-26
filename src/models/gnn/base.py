@@ -7,6 +7,24 @@ from src.graph_utils import build_relational_edge_index
 from src.models.base import KGModel
 
 
+#: Where a residual connection sits relative to the hidden activation.
+RESIDUAL_MODES = ("none", "post", "pre")
+
+
+def residual_mode(args: dict) -> str:
+    """Read ``--gnn_residual``, accepting the boolean recorded by runs before 2026-10-16.
+
+    Those runs stored True for what is now ``post``: the activation saw the summed signal.
+    """
+    value = args.get("gnn_residual", "none")
+    if isinstance(value, bool):
+        return "post" if value else "none"
+    value = value or "none"
+    if value not in RESIDUAL_MODES:
+        raise ValueError(f"Unknown gnn_residual '{value}'. Available: {list(RESIDUAL_MODES)}")
+    return value
+
+
 class RelationalGNN(KGModel):
     """KGModel whose entity representations come from message passing over the training graph.
 

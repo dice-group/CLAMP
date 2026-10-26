@@ -240,7 +240,7 @@ def test_graphsage_final_norm(final_norm):
 @pytest.mark.parametrize("signature", [None, [0, 1]])
 def test_clifford_rgcn_bases(signature):
     """With bases, w_r = comp[r] @ bases: the layer equals the free layer holding those w_r."""
-    from src.models.clifford_rgcn import CliffordRGCNConv
+    from src.models.clifford.layers.rgcn import CliffordRGCNConv
 
     args = {**_toy_args("CliffordRGCN"), "clifford_num_bases": 2, "clifford_signature": signature}
     model = MODEL_MAP["CliffordRGCN"](args=args)
@@ -326,7 +326,7 @@ def test_clifford_decoder_trains(model_name, signature):
 
 
 def test_compgcn_complex_compositions_match_decoders():
-    from src.models.compgcn import _compose
+    from src.models.gnn.layers.compgcn import _compose
 
     x, r = torch.randn(5, 8), torch.randn(5, 8)
     xc = torch.complex(x[:, :4], x[:, 4:])
