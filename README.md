@@ -1,6 +1,6 @@
-# gnn_kge
+# CLAMP
 
-Knowledge graph completion with graph neural networks and Clifford algebra.
+Clifford Algebra Message Passing.
 
 ## Installation
 
