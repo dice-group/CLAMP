@@ -50,12 +50,9 @@ Each dense encoder next to its Clifford counterpart, in which every per-relation
 by one multivector per relation.
 
 **Recipe, identical for every row:**
-- **Scoring and loss:** DistMult decoder, 1vsAll with reciprocal relations, filtered evaluation of
-  tail queries in both directions.
+- **Scoring and loss:** DistMult decoder, 1vsAll with reciprocal relations, filtered evaluation.
 - **Optimisation:** Adagrad at lr 0.1, input dropout 0.2, xavier initialisation, batch 1024.
 - **Stopping:** at most 300 epochs, validation every 25 epochs, early stopping with patience 4.
-- **Encoder settings:** query-edge exclusion none; dense RGCN with 2 bases; 4 heads for GATv2 and
-  CliffordGATv2.
 
 "2L linear" removes the activation between the two layers. Params is the total parameter count,
 embedding tables included.

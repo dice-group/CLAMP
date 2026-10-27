@@ -237,6 +237,30 @@ def test_graphsage_final_norm(final_norm):
     assert not missing, f"No gradient reached: {missing}"
 
 
+@pytest.mark.parametrize("aggr", ["mean", "sum", "max"])
+def test_relational_sage_layer_matches_per_relation_convs(aggr):
+    """The grouped pass equals summing PyG's SAGEConv, holding W_r, over each relation's edges."""
+    from torch_geometric.nn import SAGEConv
+
+    from src.models.gnn.layers.graphsage import RelationalSAGELayer
+
+    torch.manual_seed(0)
+    num_nodes, num_relations = 12, 5
+    layer = RelationalSAGELayer(8, 8, num_relations, aggr)
+    x = torch.randn(num_nodes, 8)
+    edge_index = torch.randint(0, num_nodes, (2, 60))
+    edge_type = torch.randint(0, num_relations - 1, (60,))  # last relation has no edges
+    expected = layer.root_lin(x)
+    conv = SAGEConv(8, 8, aggr=aggr, root_weight=False, bias=False)
+    for r in range(num_relations):
+        mask = edge_type == r
+        if mask.any():
+            with torch.no_grad():
+                conv.lin_l.weight.copy_(layer.rel_weight[r].T)
+            expected = expected + conv(x, edge_index[:, mask])
+    assert torch.allclose(layer(x, edge_index, edge_type), expected, atol=1e-6)
+
+
 @pytest.mark.parametrize("signature", [None, [0, 1]])
 def test_clifford_rgcn_bases(signature):
     """With bases, w_r = comp[r] @ bases: the layer equals the free layer holding those w_r."""

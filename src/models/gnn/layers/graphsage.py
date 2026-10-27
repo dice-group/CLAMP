@@ -1,23 +1,19 @@
-r"""SAGEConv layer documentation (verbatim excerpt).
+"""Relational GraphSAGE layer (Hamilton et al., 2017, https://arxiv.org/abs/1706.02216).
 
-The GraphSAGE operator from the `"Inductive Representation Learning on
-Large Graphs" <https://arxiv.org/abs/1706.02216>`_ paper.
-
-.. math::
-    \mathbf{x}^{\prime}_i = \mathbf{W}_1 \mathbf{x}_i + \mathbf{W}_2 \cdot
-    \mathrm{mean}_{j \in \mathcal{N(i)}} \mathbf{x}_j
+PyG's SAGEConv computes x'_i = W_1 x_i + W_2 mean_{j in N(i)} x_j; this layer keeps one
+shared root map W_1 and gives every relation its own neighbour matrix W_r.
 """
-# PyG source: torch_geometric/nn/conv/sage_conv.py
-# Copyright (c) 2023 PyG Team. MIT license: src/models/PYG_LICENSE.
+
+import math
 
 import torch
-from torch_geometric.nn import SAGEConv
+from torch_geometric.utils import scatter
 
 
 class RelationalSAGELayer(torch.nn.Module):
-    """Sum per-relation SAGEConv outputs and add one shared root transform.
+    """x'_i = W_root x_i + b + sum_r W_r AGG_{j in N_r(i)} x_j, one matrix per relation.
 
-    root_weight=False prevents adding the root once per relation.
+    Each W_r is initialized like a bias-free SAGEConv neighbour map, U(-1/sqrt(in), 1/sqrt(in)).
     """
     def __init__(
         self, in_channels: int, out_channels: int,
@@ -25,13 +21,10 @@ class RelationalSAGELayer(torch.nn.Module):
     ):
         super().__init__()
         self.num_relations = num_relations
-        self.convs = torch.nn.ModuleList(
-            [
-                SAGEConv(
-                    in_channels, out_channels, aggr=aggr, root_weight=False, bias=False
-                )
-                for _ in range(num_relations)
-            ]
+        self.aggr = aggr
+        bound = 1 / math.sqrt(in_channels)
+        self.rel_weight = torch.nn.Parameter(
+            torch.empty(num_relations, in_channels, out_channels).uniform_(-bound, bound)
         )
         self.root_lin = torch.nn.Linear(in_channels, out_channels)
 
@@ -41,10 +34,14 @@ class RelationalSAGELayer(torch.nn.Module):
         edge_index: torch.LongTensor,
         edge_type: torch.LongTensor,
     ) -> torch.FloatTensor:
-        out = self.root_lin(x)
-        for relation_id, conv in enumerate(self.convs):
-            relation_mask = edge_type == relation_id
-            if not torch.any(relation_mask):
-                continue
-            out = out + conv(x, edge_index[:, relation_mask])
-        return out
+        """Neighbours are pooled per (target, relation) group, then each relation's groups,
+        contiguous because unique sorts the keys, go through one matmul with W_r.
+        """
+        src, dst = edge_index
+        num_nodes = x.size(0)
+        groups, group_of_edge = torch.unique(edge_type * num_nodes + dst, return_inverse=True)
+        pooled = scatter(x[src], group_of_edge, dim=0, dim_size=len(groups), reduce=self.aggr)
+        counts = torch.bincount(groups // num_nodes, minlength=self.num_relations).tolist()
+        chunks = torch.split(pooled, counts)
+        messages = torch.cat([chunk @ w for chunk, w in zip(chunks, self.rel_weight)])
+        return self.root_lin(x).index_add(0, groups % num_nodes, messages)
