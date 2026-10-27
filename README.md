@@ -119,6 +119,7 @@ Clifford models in Cl(0,1) (64 complex channels) and in Cl(7,0) (one 128-coeffic
 | CliffordRGCN 2L linear, Cl(0,1) | 555,520 | 0.466 | 0.308 | 0.231 | 0.456 |
 | GATv2 2L | 568,032 | 0.334 | 0.274 | 0.202 | 0.415 |
 | CliffordGATv2 2L, Cl(0,1) | 556,544 | 0.399 | 0.292 | 0.216 | 0.438 |
+| GraphSAGE 2L | 759,872 | 0.375 | 0.290 | 0.215 | 0.437 |
 | CliffordGraphSAGE 2L, Cl(0,1) | 555,520 | 0.360 | 0.279 | 0.204 | 0.426 |
 
 ### CoDEx-M, d = 128, no encoder (mean of seeds 1–2)
