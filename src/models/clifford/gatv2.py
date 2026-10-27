@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from src.clifford_algebra import CliffordAlgebra
+from src.models.clifford.clifford_algebra import CliffordAlgebra
 from src.models.clifford.layers.gatv2 import CliffordGATv2Conv
 from src.models.gnn.base import RelationalGNN
 

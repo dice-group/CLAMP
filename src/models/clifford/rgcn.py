@@ -7,7 +7,7 @@ Each embedding holds C = dim / 2**(p+q) full Cl(p, q) multivectors; * is the Cli
 import torch
 from torch import nn
 
-from src.clifford_algebra import CliffordAlgebra
+from src.models.clifford.clifford_algebra import CliffordAlgebra
 from src.models.clifford.layers.activations import clifford_activation
 from src.models.clifford.layers.rgcn import CliffordRGCNConv
 from src.models.gnn.base import RelationalGNN, residual_mode

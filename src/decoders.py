@@ -74,7 +74,7 @@ def _rotate_k_vs_all(h, r, entity_repr):
 def clifford_decoder(algebra):
     """Triple score and query for <h * r, t>: the Clifford product of h and r, dotted with t.
 
-    Full multivector product in every channel of ``algebra`` (see src/clifford_algebra.py),
+    Full multivector product in every channel of ``algebra`` (see src/models/clifford/clifford_algebra.py),
     then the Euclidean inner product over all coefficients. Cl(0, 0) is DistMult and, in the
     blade-major layout, Cl(0, 1) is ComplEx.
     """

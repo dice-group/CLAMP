@@ -3,7 +3,6 @@ from typing import Optional, Tuple
 import torch
 from torch_geometric.nn.kge.base import KGEModel
 
-from src.clifford_algebra import CliffordAlgebra
 from src.decoders import BILINEAR_DECODERS, COMPLEX_DECODERS, DECODERS, clifford_decoder
 
 
@@ -51,6 +50,9 @@ class KGModel(KGEModel):
         self.decoder = decoder
         self.query_fn = None
         if decoder == "Clifford":
+            # Imported here: the clifford package's encoders import this module.
+            from src.models.clifford.clifford_algebra import CliffordAlgebra
+
             # Algebra from --clifford_signature, shared with Clifford encoders.
             self.decoder_algebra = CliffordAlgebra.for_embedding_dim(
                 self.embedding_dim, args.get("clifford_signature")
