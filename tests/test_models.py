@@ -373,3 +373,83 @@ def test_compgcn_complex_compositions_train(opn):
     args["embedding_dim"] = 7
     with pytest.raises(ValueError, match="even embedding_dim"):
         MODEL_MAP["CompGCN"](args=args)
+
+
+@pytest.mark.parametrize("signature", [[0, 1], [0, 2], [1, 1], [3, 0]])
+def test_mixing_matrix_matches_per_channel_products(signature):
+    """x @ mixing_matrix(W) gives output channel o = sum_c x_c * W[o, c] (single-multivector
+    products), for a batch of grids; with W[o, c] = 0 for o != c it is clifford_multiplication_matrix."""
+    from src.models.clifford.clifford_algebra import CliffordAlgebra
+    algebra = CliffordAlgebra(*signature, dim=4 * 2 ** sum(signature))
+    one = CliffordAlgebra(*signature)
+    C, B = algebra.channels, algebra.num_blades
+    x = torch.randn(5, algebra.dim)
+    w = torch.randn(3, C, C, B)
+    xs = algebra.split_blades(x)  # (5, B, C)
+    expected = torch.stack(
+        [torch.stack([sum(one.clifford_multiplication(xs[:, :, c], w[r, o, c]) for c in range(C)) for o in range(C)], -1)
+         for r in range(3)]
+    ).reshape(3, 5, algebra.dim)
+    assert torch.allclose(x @ algebra.mixing_matrix(w), expected, atol=1e-5)
+    diagonal = torch.zeros(C, C, B)
+    v = torch.randn(algebra.dim)
+    diagonal[range(C), range(C)] = algebra.split_blades(v).T
+    assert torch.equal(algebra.mixing_matrix(diagonal), algebra.clifford_multiplication_matrix(v))
+
+
+@pytest.mark.parametrize("channel_mix", ["relation", "shared"])
+def test_clifford_rgcn_channel_mix(channel_mix):
+    """'none' is the unchanged default; 'relation' with diagonal grids reproduces it; the
+    mixing parameters have the expected shapes and get gradients."""
+    args = {**_toy_args("CliffordRGCN", embedding_dim=16), "clifford_signature": [0, 1]}
+    torch.manual_seed(0)
+    plain = MODEL_MAP["CliffordRGCN"](args=args).eval()
+    torch.manual_seed(0)
+    default = MODEL_MAP["CliffordRGCN"](args={**args, "cl_channel_mix": "none"}).eval()
+    assert all(torch.equal(v, default.state_dict()[k]) for k, v in plain.state_dict().items())
+    model = MODEL_MAP["CliffordRGCN"](args={**args, "cl_channel_mix": channel_mix})
+    conv = model.gnn_layers[0]
+    C, B = conv.algebra.channels, conv.algebra.num_blades
+    name = "rel_weight" if channel_mix == "relation" else "mix_weight"
+    shape = (args["num_relations"], C, C, B) if channel_mix == "relation" else (C, C, B)
+    assert getattr(conv, name).shape == shape
+    model.forward_k_vs_all(torch.tensor([[0, 1], [2, 4]])).sum().backward()
+    assert all(getattr(layer, name).grad.abs().sum() > 0 for layer in model.gnn_layers)
+    if channel_mix == "relation":
+        with torch.no_grad():
+            for mixed, ref in zip(model.gnn_layers, plain.gnn_layers):
+                mixed.rel_weight.zero_()
+                mixed.rel_weight[:, range(C), range(C)] = ref.algebra.split_blades(ref.rel_weight).transpose(1, 2)
+                mixed.root.load_state_dict(ref.root.state_dict())
+        model.node_emb.load_state_dict(plain.node_emb.state_dict())
+        edge_index, edge_type = plain.graph
+        assert torch.allclose(model.eval().encode(edge_index, edge_type),
+                              plain.encode(edge_index, edge_type), atol=1e-5)
+
+
+def test_cl_channel_mix_rejections():
+    from src.config import get_default_arguments
+    args = {**_toy_args("CliffordRGCN"), "cl_channel_mix": "relation", "clifford_num_bases": 2}
+    with pytest.raises(ValueError, match="no basis decomposition"):
+        MODEL_MAP["CliffordRGCN"](args=args)
+    with pytest.raises(SystemExit):
+        get_default_arguments(["--model", "CliffordGATv2", "--cl_channel_mix", "shared"])
+
+
+@pytest.mark.parametrize("signature", [[0, 1], [0, 2], [1, 1], [3, 0], [2, 1]])
+def test_mixing_matrix_matches_cliffordlayers(signature):
+    """Same map as cliffordlayers' CliffordLinear kernel; it orders 3-generator blades by grade
+    (1, e1, e2, e3, e12, ...), so library blade l is our blade order[l]."""
+    cliffordlinear = pytest.importorskip("cliffordlayers.nn.modules.cliffordlinear")
+    from src.models.clifford.clifford_algebra import CliffordAlgebra
+    p, q = signature
+    algebra = CliffordAlgebra(p, q, dim=2 * 2 ** (p + q))
+    C, B = algebra.channels, algebra.num_blades
+    lin = cliffordlinear.CliffordLinear([1.0] * p + [-1.0] * q, C, C, bias=False)
+    _, kernel = lin._get_kernel(lin.weight, lin.g.to(lin.weight))  # (dim_out, dim_in), library order
+    order = [0, 1, 2, 4, 3, 5, 6, 7] if B == 8 else list(range(B))
+    w = torch.zeros(C, C, B)
+    w[..., order] = lin.weight.detach().permute(1, 2, 0)
+    position = torch.tensor([order[l] * C + c for l in range(B) for c in range(C)])
+    ours = algebra.mixing_matrix(w)[position][:, position]
+    assert torch.allclose(ours, kernel.detach().T, atol=1e-6)

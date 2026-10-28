@@ -1,6 +1,7 @@
 import argparse
 
 from src.filtering import TIE_POLICIES
+from src.models.clifford.layers.rgcn import CHANNEL_MIX
 from src.models.gnn.base import RESIDUAL_MODES
 
 
@@ -75,6 +76,13 @@ def get_default_arguments(args_list=None) -> argparse.Namespace:
         "--clifford_num_bases", type=int, default=None,
         help="CliffordRGCN: relation multivectors as combinations of this many shared "
         "multivectors (RGCN basis decomposition); unset uses one multivector per relation.",
+    )
+    parser.add_argument(
+        "--cl_channel_mix", choices=list(CHANNEL_MIX), default="none",
+        help="CliffordRGCN channel interaction. 'none': channel c is multiplied only by channel c "
+        "of w_r. 'relation': a C x C grid of multivectors per relation, output channel o = "
+        "sum_c x_c * W_r[o, c] (no --clifford_num_bases). 'shared': one C x C grid per layer "
+        "mixes the summed messages.",
     )
     parser.add_argument(
         "--gnn_graph", type=str, default="train", choices=["train", "random", "none"],
@@ -172,5 +180,7 @@ def get_default_arguments(args_list=None) -> argparse.Namespace:
     )
 
     parsed_args = parser.parse_args(args_list)
+    if parsed_args.cl_channel_mix != "none" and parsed_args.model != "CliffordRGCN":
+        parser.error("--cl_channel_mix is implemented for CliffordRGCN only")
     parsed_args.full_storage_path = parsed_args.full_storage_path or None
     return parsed_args

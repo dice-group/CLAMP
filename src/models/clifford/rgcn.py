@@ -21,7 +21,8 @@ class CliffordRGCN(RelationalGNN):
     a whole grade by a sigmoid of an invariant. ``--gnn_residual`` adds each layer's input to
     its output, inside (``post``) or around (``pre``) the activation. ``--clifford_num_bases`` selects the basis decomposition; unset, each relation
     has its own multivector. The dense ``--num_bases`` flag is not read, so runs made before
-    the basis option keep their meaning.
+    the basis option keep their meaning. ``--cl_channel_mix`` lets the channels interact,
+    per relation or through one shared grid per layer (see CliffordRGCNConv).
     """
     name = "CliffordRGCN"
 
@@ -32,9 +33,10 @@ class CliffordRGCN(RelationalGNN):
         )
         self.gnn_residual = residual_mode(args)
         num_bases = args.get("clifford_num_bases")
+        channel_mix = args.get("cl_channel_mix", "none")
         self.gnn_layers = nn.ModuleList(
             [
-                CliffordRGCNConv(self.clifford_algebra, self.num_relations, num_bases)
+                CliffordRGCNConv(self.clifford_algebra, self.num_relations, num_bases, channel_mix)
                 for _ in range(self.num_gnn_layers)
             ]
         )

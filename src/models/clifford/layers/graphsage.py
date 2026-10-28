@@ -33,7 +33,6 @@ class CliffordRelationalSAGELayer(nn.Module):
 
         The encoder applies activation and coefficient L2 normalization afterward.
         """
-        messages = relational_aggregate(
-            self.algebra, x, edge_index, edge_type, self.rel_weight, self.aggregator
-        )
+        matrices = self.algebra.clifford_multiplication_matrix(self.rel_weight)
+        messages = relational_aggregate(x, edge_index, edge_type, matrices, self.aggregator)
         return self.root_lin(x) + messages

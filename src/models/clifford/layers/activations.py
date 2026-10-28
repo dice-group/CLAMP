@@ -41,8 +41,8 @@ class MultivectorGradeGate(nn.Module):
     def __init__(self, algebra):
         super().__init__()
         self.algebra = algebra
-        self.scale = nn.Parameter(torch.ones(algebra.grades, algebra.channels))
-        self.shift = nn.Parameter(torch.zeros(algebra.grades, algebra.channels))
+        self.scale = nn.Parameter(torch.ones(algebra.num_grades, algebra.channels))
+        self.shift = nn.Parameter(torch.zeros(algebra.num_grades, algebra.channels))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         invariants = self.algebra.grade_quadratic_form(x)

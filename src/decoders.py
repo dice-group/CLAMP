@@ -79,7 +79,7 @@ def clifford_decoder(algebra):
     blade-major layout, Cl(0, 1) is ComplEx.
     """
     def query(h, r):
-        return torch.einsum("bd,bdk->bk", h, algebra.left_matrix(r))
+        return torch.einsum("bd,bdk->bk", h, algebra.clifford_multiplication_matrix(r))
 
     def triple(h, r, t):
         return (query(h, r) * t).sum(dim=-1)

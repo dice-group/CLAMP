@@ -53,11 +53,11 @@ class CliffordGATv2Conv(nn.Module):
         Queries are computed once per node; all heads share one batched product.
         """
         src, dst = edge_index
-        z = relational_transform(self.algebra, x[src], edge_type, self.rel_weight)
-        left = self.algebra.left_matrix
-        query = torch.einsum("nd,hdk->nhk", x, left(self.query))  # (nodes, heads, dim)
-        key = torch.einsum("ed,hdk->ehk", z, left(self.key))       # (edges, heads, dim)
-        value = torch.einsum("ed,hdk->ehk", z, left(self.value))
+        mul = self.algebra.clifford_multiplication_matrix
+        z = relational_transform(x[src], edge_type, mul(self.rel_weight))
+        query = torch.einsum("nd,hdk->nhk", x, mul(self.query))  # (nodes, heads, dim)
+        key = torch.einsum("ed,hdk->ehk", z, mul(self.key))       # (edges, heads, dim)
+        value = torch.einsum("ed,hdk->ehk", z, mul(self.value))
         u = F.leaky_relu(query[dst] + key, self.negative_slope)
         logits = self.algebra.scalar_product(u, self.att)          # (edges, heads)
         alpha = softmax(logits, dst, num_nodes=x.size(0))
